@@ -4,25 +4,34 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PixaMap | Automated Orthophoto Digitization & GIS Intelligence</title>
-  <!-- Leaflet CSS -->
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Leaflet + Icons -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="style.css" />
-  <!-- Font Awesome -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="app-container">
-    <!-- Sidebar -->
+
+    <!-- ============ SIDEBAR ============ -->
     <aside class="sidebar">
+
+      <!-- Brand -->
       <div class="brand">
         <div class="logo-icon"><i class="fa-solid fa-layer-group"></i></div>
-        <div>
-          <h1>PixaMap</h1>
+        <div class="brand-text">
+          <h1>Pixa<span>Map</span></h1>
           <span class="subtext">GeoAI Digitization & Regularization Engine</span>
+          <span class="engine-pill"><span class="pulse-dot"></span>AI ENGINE ONLINE</span>
         </div>
       </div>
 
-      <!-- Interactive Area Selection (AOI) -->
+      <!-- AOI -->
       <div class="card aoi-card">
         <h3><i class="fa-solid fa-draw-polygon"></i> Area of Interest (AOI)</h3>
         <div class="btn-group" style="display: flex; gap: 6px; margin-bottom: 8px;">
@@ -33,113 +42,108 @@
             <i class="fa-solid fa-crosshairs"></i> Current View
           </button>
         </div>
-        <div id="aoiInfo" class="aoi-info-box" style="background: rgba(0,0,0,0.25); padding: 8px; border-radius: 6px; font-size: 11px; margin-bottom: 8px; border: 1px dashed var(--card-border);">
-          <div style="color: var(--text-secondary);"><i class="fa-solid fa-location-dot"></i> <span id="aoiAreaText">Click 'Drag Box' to select an area</span></div>
+        <div id="aoiInfo" class="aoi-info-box">
+          <div><i class="fa-solid fa-location-dot"></i> <span id="aoiAreaText">Click 'Drag Box' to select an area</span></div>
         </div>
         <button id="btnExtractAOI" class="btn btn-primary" disabled>
           <i class="fa-solid fa-bolt"></i> Extract GIS for Selected Area
         </button>
       </div>
 
-      <!-- Quick Action: Demo / Upload -->
+      <!-- Demo -->
       <div class="card action-card">
         <button id="btnRunDemo" class="btn btn-secondary" style="font-size: 12px;">
           <i class="fa-solid fa-wand-magic-sparkles"></i> Run Synthetic Demo Scene
         </button>
+        <div class="caption"><i class="fa-solid fa-circle-info"></i> Full pipeline test — no AOI needed</div>
       </div>
 
-      <!-- Processing Summary Metrics -->
+      <!-- Metrics -->
       <div class="card metrics-card">
         <h3><i class="fa-solid fa-chart-pie"></i> Extracted GIS Metrics</h3>
         <div class="metrics-grid">
-          <div class="metric-item">
-            <span class="metric-val" id="metricBuildings">--</span>
-            <span class="metric-lbl">Buildings (90° Snap)</span>
+          <div class="metric-item" style="--mc:#fb923c">
+            <div class="metric-top">
+              <span class="metric-val" id="metricBuildings">--</span>
+              <i class="fa-solid fa-building"></i>
+            </div>
+            <span class="metric-lbl">Buildings · 90° Snap</span>
           </div>
-          <div class="metric-item">
-            <span class="metric-val" id="metricRoads">--</span>
-            <span class="metric-lbl">Road Network (km)</span>
+          <div class="metric-item" style="--mc:#facc15">
+            <div class="metric-top">
+              <span class="metric-val" id="metricRoads">--</span>
+              <i class="fa-solid fa-road"></i>
+            </div>
+            <span class="metric-lbl">Road Network</span>
           </div>
-          <div class="metric-item">
-            <span class="metric-val" id="metricTrees">--</span>
-            <span class="metric-lbl">Trees (3D Height)</span>
+          <div class="metric-item" style="--mc:#4ade80">
+            <div class="metric-top">
+              <span class="metric-val" id="metricTrees">--</span>
+              <i class="fa-solid fa-tree"></i>
+            </div>
+            <span class="metric-lbl">Trees · 3D Height</span>
           </div>
-          <div class="metric-item">
-            <span class="metric-val" id="metricFarms">--</span>
+          <div class="metric-item" style="--mc:#a3e635">
+            <div class="metric-top">
+              <span class="metric-val" id="metricFarms">--</span>
+              <i class="fa-solid fa-wheat-awn"></i>
+            </div>
             <span class="metric-lbl">Farm Parcels</span>
           </div>
         </div>
       </div>
 
-      <!-- Layer Control Toggles -->
+      <!-- Layers -->
       <div class="card layers-card">
         <h3><i class="fa-solid fa-bars-staggered"></i> Active GIS Layers</h3>
         <div class="layer-item">
-          <label class="switch">
-            <input type="checkbox" id="chkBuildings" checked>
-            <span class="slider"></span>
-          </label>
-          <span class="layer-color-dot" style="background: #ff5722;"></span>
+          <label class="switch"><input type="checkbox" id="chkBuildings" checked><span class="slider"></span></label>
+          <span class="layer-color-dot" style="background:#fb923c; box-shadow:0 0 8px #fb923c88;"></span>
           <span class="layer-name">Building Footprints</span>
         </div>
-
         <div class="layer-item">
-          <label class="switch">
-            <input type="checkbox" id="chkRoads" checked>
-            <span class="slider"></span>
-          </label>
-          <span class="layer-color-dot" style="background: #ffeb3b;"></span>
+          <label class="switch"><input type="checkbox" id="chkRoads" checked><span class="slider"></span></label>
+          <span class="layer-color-dot" style="background:#facc15; box-shadow:0 0 8px #facc1588;"></span>
           <span class="layer-name">Road Centerlines</span>
         </div>
-
         <div class="layer-item">
-          <label class="switch">
-            <input type="checkbox" id="chkTrees" checked>
-            <span class="slider"></span>
-          </label>
-          <span class="layer-color-dot" style="background: #4caf50;"></span>
+          <label class="switch"><input type="checkbox" id="chkTrees" checked><span class="slider"></span></label>
+          <span class="layer-color-dot" style="background:#4ade80; box-shadow:0 0 8px #4ade8088;"></span>
           <span class="layer-name">Tree Canopy (3D)</span>
         </div>
-
         <div class="layer-item">
-          <label class="switch">
-            <input type="checkbox" id="chkFarms" checked>
-            <span class="slider"></span>
-          </label>
-          <span class="layer-color-dot" style="background: #8bc34a;"></span>
+          <label class="switch"><input type="checkbox" id="chkFarms" checked><span class="slider"></span></label>
+          <span class="layer-color-dot" style="background:#a3e635; box-shadow:0 0 8px #a3e63588;"></span>
           <span class="layer-name">Farm Boundaries</span>
         </div>
-
         <div class="layer-item">
-          <label class="switch">
-            <input type="checkbox" id="chkWater" checked>
-            <span class="slider"></span>
-          </label>
-          <span class="layer-color-dot" style="background: #00bcd4;"></span>
+          <label class="switch"><input type="checkbox" id="chkWater" checked><span class="slider"></span></label>
+          <span class="layer-color-dot" style="background:#38bdf8; box-shadow:0 0 8px #38bdf888;"></span>
           <span class="layer-name">Water Bodies</span>
         </div>
       </div>
 
-      <!-- QC & Confidence Filter -->
+      <!-- QC -->
       <div class="card qc-card">
         <h3><i class="fa-solid fa-shield-halved"></i> Quality Control (QC)</h3>
         <div class="slider-group">
           <div class="slider-header">
             <span>Confidence Threshold</span>
-            <span id="lblConfVal">0.75</span>
+            <span id="lblConfVal" class="mono">0.75</span>
           </div>
           <input type="range" id="rngConfidence" min="0.5" max="0.99" step="0.05" value="0.75">
         </div>
+        <div id="qcFlagCount" class="qc-count"><i class="fa-solid fa-flag"></i> No features loaded</div>
         <div class="qc-flag">
           <i class="fa-solid fa-triangle-exclamation"></i>
-          <span>Polygons with &lt; 0.75 confidence flagged for human verification</span>
+          <span>Low-confidence polygons flagged for human verification</span>
         </div>
       </div>
 
-      <!-- Export Buttons -->
+      <!-- Export -->
       <div class="card export-card">
         <h3><i class="fa-solid fa-file-export"></i> GIS Ready Export</h3>
-        <div class="btn-group">
+        <div class="btn-group export-group">
           <button id="btnExportZip" class="btn btn-secondary" disabled>
             <i class="fa-solid fa-file-zipper"></i> Shapefile (.shp.zip)
           </button>
@@ -150,29 +154,73 @@
       </div>
 
       <footer class="sidebar-footer">
-        <div>Team Zentropy • Ideathon 2026</div>
-        <div>Yash Shingan • GIS Specialist</div>
+        <div>PixaMap GeoAI Engine • Ideathon 2026</div>
+        <div>Automated Orthophoto Digitization & Regularization</div>
       </footer>
     </aside>
 
-    <!-- Main Map Canvas -->
-    <main class="map-wrapper">
+    <!-- ============ MAP ============ -->
+    <main class="map-wrapper" id="mapWrapper">
       <div id="map"></div>
 
-      <!-- Floating Feature Inspector -->
+      <!-- Map Legend (click to toggle) -->
+      <div id="mapLegend" class="map-legend">
+        <div class="legend-header">
+          <i class="fa-solid fa-layer-group"></i> Layers
+          <span class="legend-hint">click to toggle</span>
+        </div>
+        <div class="legend-item" data-layer="buildings"><span class="legend-dot" style="--c:#fb923c"></span>Buildings</div>
+        <div class="legend-item" data-layer="roads"><span class="legend-dot" style="--c:#facc15"></span>Roads</div>
+        <div class="legend-item" data-layer="trees"><span class="legend-dot" style="--c:#4ade80"></span>Trees</div>
+        <div class="legend-item" data-layer="farms"><span class="legend-dot" style="--c:#a3e635"></span>Farms</div>
+        <div class="legend-item" data-layer="water"><span class="legend-dot" style="--c:#38bdf8"></span>Water</div>
+      </div>
+
+      <!-- Live status bar -->
+      <div class="map-status-bar">
+        <span><i class="fa-solid fa-location-crosshairs"></i> <span id="coordDisplay" class="mono">—</span></span>
+        <span class="sb-divider"></span>
+        <span><i class="fa-solid fa-magnifying-glass-plus"></i> Zoom <b id="zoomDisplay" class="mono">16</b></span>
+      </div>
+
+      <!-- Inspector -->
       <div id="inspectorPanel" class="inspector-panel hidden">
         <div class="inspector-header">
           <h4 id="inspectorTitle"><i class="fa-solid fa-circle-info"></i> Feature Attributes</h4>
           <button id="btnCloseInspector" class="btn-icon">&times;</button>
         </div>
-        <div id="inspectorContent" class="inspector-body">
-          <!-- Populated dynamically on click -->
-        </div>
+        <div id="inspectorContent" class="inspector-body"></div>
       </div>
     </main>
   </div>
 
-  <!-- Leaflet JS -->
+  <!-- ============ PROCESSING PIPELINE OVERLAY ============ -->
+  <div id="processingOverlay" class="overlay hidden">
+    <div class="processing-card">
+      <div class="radar">
+        <div class="radar-sweep"></div>
+        <i class="fa-solid fa-satellite-dish"></i>
+      </div>
+      <h3>GeoAI Pipeline Running</h3>
+      <div class="pipeline-stages" id="pipelineStages"></div>
+      <div class="progress-track"><div class="progress-fill" id="pipelineProgress"></div></div>
+      <div class="processing-sub" id="pipelineSub">Initializing engine…</div>
+    </div>
+  </div>
+
+  <!-- ============ TOASTS ============ -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- ============ SPLASH ============ -->
+  <div id="splashScreen" class="splash">
+    <div class="radar splash-radar">
+      <div class="radar-sweep"></div>
+      <i class="fa-solid fa-layer-group"></i>
+    </div>
+    <h1 class="splash-title">Pixa<span>Map</span></h1>
+    <p class="splash-sub">Initializing GeoAI Engine<span class="dots"><span>.</span><span>.</span><span>.</span></span></p>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="app.js"></script>
 </body>

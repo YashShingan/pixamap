@@ -1,8 +1,8 @@
 # Comprehensive Research Report: AI-Powered Automated Digitization of Orthophotos for GIS & LULC Mapping
 
 **Platform Concept**: PixaMap  
-**Team**: Zentropy (Vasantdada Patil Pratishthan's College of Engineering and Visual Arts)  
-**Author**: Antigravity (Advanced AI Research & Systems Engineering)  
+**Domain**: Automated Orthophoto Digitization & GIS Regularization  
+**Author**: Systems Engineering & GeoAI Research  
 **Date**: September 2026  
 
 ---
@@ -30,9 +30,9 @@ AI-Powered PixaMap Engine:
 
 ---
 
-## 2. Critical Scientific & Technical Audit of the Team's Pitch Deck
+## 2. Critical Scientific & Technical Audit of the Pitch Deck
 
-Your team (**Team Zentropy: Yash Shingan - GIS Specialist, Sakshi Kavade - AI/ML Lead, Manthan Sawant - Backend Developer, Shravan Manore - Frontend Developer**) has identified a massive market opportunity. However, if this deck is presented to experienced GIS scientists, municipal chief survey officers, or hackathon judges, several severe technical and strategic discrepancies will be challenged:
+The project addresses a massive market opportunity in automated geospatial mapping. However, when presenting to experienced GIS scientists, municipal chief survey officers, or hackathon judges, several technical and strategic discrepancies must be addressed:
 
 ### Audit Table: Red Flags vs. Scientific Corrections
 
@@ -239,7 +239,7 @@ When pitching to judges, replace generic statements with crisp, authoritative do
 +-----------------------------------------------------------------------------------------+
 |                                THE REFINED PIXAMAP PITCH                                |
 +-----------------------------------------------------------------------------------------+
-| "We are Team Zentropy building PixaMap.                                                 |
+| "We are presenting PixaMap.                                                             |
 |                                                                                         |
 | Today, drones map cities in minutes, but GIS analysts spend weeks manually clicking     |
 | vertices to extract building footprints, road lines, and land parcels.                  |
