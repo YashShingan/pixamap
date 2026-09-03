@@ -21,7 +21,7 @@ class BuildingRegularizer:
     def __init__(
         self,
         min_building_area_sqm: float = 4.0,
-        max_building_area_sqm: float = 3500.0,
+        max_building_area_sqm: float = 380.0,
         max_aspect_ratio: float = 4.5,
         min_confidence_threshold: float = 0.70,
         pixel_size_meters: float = 0.60
@@ -180,18 +180,19 @@ class BuildingRegularizer:
         # Find peaks within this cluster
         sub_dist = np.where(mask_roi == 255, dist_transform, 0.0)
         max_v = sub_dist.max()
-        if max_v < 3:
+        if max_v < 1.5:
             return []
 
-        sub_peaks = (sub_dist > max(3.0, 0.4 * max_v)).astype(np.uint8)
+        # Fine-grained adaptive peak thresholding for individual houses
+        sub_peaks = (sub_dist >= max(1.8, 0.22 * max_v)).astype(np.uint8)
         num_peaks, peak_labels, stats, centroids = cv2.connectedComponentsWithStats(sub_peaks)
 
         fid = start_id
         for i in range(1, num_peaks):
             cx, cy = centroids[i]
             r = float(dist_transform[int(cy), int(cx)])
-            w_px = max(6, int(r * 2.2))
-            h_px = max(6, int(r * 2.2))
+            w_px = max(5, int(r * 2.0))
+            h_px = max(5, int(r * 2.0))
 
             # Bounding box around peak
             rect = ((cx, cy), (w_px, h_px), 0.0)
@@ -207,6 +208,8 @@ class BuildingRegularizer:
                 continue
 
             area_sqm = round(float((w_px * h_px) * (px_m ** 2)), 2)
+            if area_sqm < 8.0:
+                continue
             features.append({
                 "type": "Feature",
                 "id": fid,

@@ -144,6 +144,7 @@ class UnifiedGeoAIEngine:
         # Excess Green Index for vegetation / trees
         green_excess = 2.0 * norm_g - norm_r - norm_b
         brightness = (r + g + b) / 3.0
+        color_dev = np.std(rgb_data[:3], axis=0)
 
         # Feature 1: Trees, Jungles & Green Canopy
         # True chlorophyll reflectance: Green is higher than Red AND Blue
@@ -152,12 +153,28 @@ class UnifiedGeoAIEngine:
         if ndsm is not None:
             tree_prob = np.where(ndsm >= 1.8, tree_prob, tree_prob * 0.15)
 
-        # Feature 2: Water Bodies (True water has Blue > Green and Blue > Red, and NEGATIVE green excess)
-        # Green forests can NEVER be water!
-        is_true_water = (b > (g + 4)) & (b > (r + 8)) & (green_excess < -0.02)
-        # Deep open water (turbid / ocean / lake) with near-zero reflectance and zero vegetation
-        is_deep_water = (brightness < 32) & (green_excess < -0.06) & (~is_green_vegetation)
-        water_prob = np.where(is_true_water | is_deep_water, 0.95, 0.0)
+        # Feature 2: Water Bodies (Inland blue lakes/ponds AND turbid coastal creeks like Thane Creek)
+        # 1. Texture smoothness: Water has near-zero local gradient variance
+        gray = cv2.cvtColor(
+            np.transpose(rgb_data[:3], (1, 2, 0)).astype(np.uint8),
+            cv2.COLOR_RGB2GRAY
+        ) if rgb_data.shape[0] >= 3 else rgb_data[0].astype(np.uint8)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        morph_grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel)
+        laplacian = cv2.Laplacian(gray, cv2.CV_32F)
+        local_texture = cv2.GaussianBlur(np.abs(laplacian), (15, 15), 0)
+
+        # Clear/blue water
+        is_blue_water = (b > (g - 5)) & (b > (r + 2)) & (green_excess < 0.02)
+        # Turbid/creek water (Thane Creek, silt, mudflats)
+        is_turbid_water = (local_texture < 4.0) & (morph_grad < 10) & (~is_green_vegetation) & (brightness > 30) & (brightness < 170) & (color_dev < 18)
+        # Deep open water
+        is_deep_water = (brightness < 36) & (~is_green_vegetation)
+
+        water_prob = np.where(is_blue_water | is_turbid_water | is_deep_water, 0.95, 0.0)
+        # Prevent buildings, roads, and high-texture terrain from being water
+        water_prob = np.where((morph_grad > 16) | is_green_vegetation, 0.0, water_prob)
 
         # Non-vegetation, non-water ground mask
         non_veg_mask = (tree_prob < 0.3) & (water_prob < 0.2)
