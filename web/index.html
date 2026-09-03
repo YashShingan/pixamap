@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PixaMap | Automated Orthophoto Digitization & GIS Intelligence</title>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-icon"><i class="fa-solid fa-layer-group"></i></div>
+        <div>
+          <h1>PixaMap</h1>
+          <span class="subtext">GeoAI Digitization & Regularization Engine</span>
+        </div>
+      </div>
+
+      <!-- Quick Action: Demo / Upload -->
+      <div class="card action-card">
+        <button id="btnRunDemo" class="btn btn-primary">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Run Live GeoAI Pipeline
+        </button>
+        <div class="caption">Executes multi-modal extraction & orthogonal regularizer</div>
+      </div>
+
+      <!-- Processing Summary Metrics -->
+      <div class="card metrics-card">
+        <h3><i class="fa-solid fa-chart-pie"></i> Extracted GIS Metrics</h3>
+        <div class="metrics-grid">
+          <div class="metric-item">
+            <span class="metric-val" id="metricBuildings">--</span>
+            <span class="metric-lbl">Buildings (90° Snap)</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-val" id="metricRoads">--</span>
+            <span class="metric-lbl">Road Network (km)</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-val" id="metricTrees">--</span>
+            <span class="metric-lbl">Trees (3D Height)</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-val" id="metricFarms">--</span>
+            <span class="metric-lbl">Farm Parcels</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Layer Control Toggles -->
+      <div class="card layers-card">
+        <h3><i class="fa-solid fa-bars-staggered"></i> Active GIS Layers</h3>
+        <div class="layer-item">
+          <label class="switch">
+            <input type="checkbox" id="chkBuildings" checked>
+            <span class="slider"></span>
+          </label>
+          <span class="layer-color-dot" style="background: #ff5722;"></span>
+          <span class="layer-name">Building Footprints</span>
+        </div>
+
+        <div class="layer-item">
+          <label class="switch">
+            <input type="checkbox" id="chkRoads" checked>
+            <span class="slider"></span>
+          </label>
+          <span class="layer-color-dot" style="background: #ffeb3b;"></span>
+          <span class="layer-name">Road Centerlines</span>
+        </div>
+
+        <div class="layer-item">
+          <label class="switch">
+            <input type="checkbox" id="chkTrees" checked>
+            <span class="slider"></span>
+          </label>
+          <span class="layer-color-dot" style="background: #4caf50;"></span>
+          <span class="layer-name">Tree Canopy (3D)</span>
+        </div>
+
+        <div class="layer-item">
+          <label class="switch">
+            <input type="checkbox" id="chkFarms" checked>
+            <span class="slider"></span>
+          </label>
+          <span class="layer-color-dot" style="background: #8bc34a;"></span>
+          <span class="layer-name">Farm Boundaries</span>
+        </div>
+
+        <div class="layer-item">
+          <label class="switch">
+            <input type="checkbox" id="chkWater" checked>
+            <span class="slider"></span>
+          </label>
+          <span class="layer-color-dot" style="background: #00bcd4;"></span>
+          <span class="layer-name">Water Bodies</span>
+        </div>
+      </div>
+
+      <!-- QC & Confidence Filter -->
+      <div class="card qc-card">
+        <h3><i class="fa-solid fa-shield-halved"></i> Quality Control (QC)</h3>
+        <div class="slider-group">
+          <div class="slider-header">
+            <span>Confidence Threshold</span>
+            <span id="lblConfVal">0.75</span>
+          </div>
+          <input type="range" id="rngConfidence" min="0.5" max="0.99" step="0.05" value="0.75">
+        </div>
+        <div class="qc-flag">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>Polygons with &lt; 0.75 confidence flagged for human verification</span>
+        </div>
+      </div>
+
+      <!-- Export Buttons -->
+      <div class="card export-card">
+        <h3><i class="fa-solid fa-file-export"></i> GIS Ready Export</h3>
+        <div class="btn-group">
+          <button id="btnExportZip" class="btn btn-secondary" disabled>
+            <i class="fa-solid fa-file-zipper"></i> Shapefile (.shp.zip)
+          </button>
+          <button id="btnExportGeoJSON" class="btn btn-secondary" disabled>
+            <i class="fa-solid fa-code"></i> GeoJSON
+          </button>
+        </div>
+      </div>
+
+      <footer class="sidebar-footer">
+        <div>Team Zentropy • Ideathon 2026</div>
+        <div>Yash Shingan • GIS Specialist</div>
+      </footer>
+    </aside>
+
+    <!-- Main Map Canvas -->
+    <main class="map-wrapper">
+      <div id="map"></div>
+
+      <!-- Floating Feature Inspector -->
+      <div id="inspectorPanel" class="inspector-panel hidden">
+        <div class="inspector-header">
+          <h4 id="inspectorTitle"><i class="fa-solid fa-circle-info"></i> Feature Attributes</h4>
+          <button id="btnCloseInspector" class="btn-icon">&times;</button>
+        </div>
+        <div id="inspectorContent" class="inspector-body">
+          <!-- Populated dynamically on click -->
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

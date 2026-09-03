@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# PixaMap Temp / Output data
+temp/
+*.zip
+*.gpkg
+*.geojson
+*.shp
+*.shx
+*.dbf
+*.prj
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
