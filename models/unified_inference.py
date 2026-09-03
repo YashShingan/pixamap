@@ -145,65 +145,73 @@ class UnifiedGeoAIEngine:
         green_excess = 2.0 * norm_g - norm_r - norm_b
         brightness = (r + g + b) / 3.0
 
-        # Feature 1: Trees & Canopy (Green excess > threshold and non-road)
-        tree_prob = np.clip((green_excess - 0.04) * 5.0, 0.0, 1.0)
+        # Feature 1: Trees, Jungles & Green Canopy
+        # True chlorophyll reflectance: Green is higher than Red AND Blue
+        is_green_vegetation = (g > r) & (g > b)
+        tree_prob = np.where(is_green_vegetation & (green_excess > 0.01), np.clip(green_excess * 4.5, 0.4, 1.0), 0.0)
         if ndsm is not None:
-            tree_prob = np.where(ndsm >= 2.0, tree_prob, tree_prob * 0.15)
+            tree_prob = np.where(ndsm >= 1.8, tree_prob, tree_prob * 0.15)
 
-        # Feature 2: Water Bodies (Dark, high blue ratio or very low brightness)
-        blue_ratio = norm_b - norm_r
-        water_prob = np.where((blue_ratio > 0.05) & (brightness < 90), 0.95, 0.0)
-        water_prob = np.where((brightness < 35), 0.85, water_prob)
+        # Feature 2: Water Bodies (True water has Blue > Green and Blue > Red, and NEGATIVE green excess)
+        # Green forests can NEVER be water!
+        is_true_water = (b > (g + 4)) & (b > (r + 8)) & (green_excess < -0.02)
+        # Deep open water (turbid / ocean / lake) with near-zero reflectance and zero vegetation
+        is_deep_water = (brightness < 32) & (green_excess < -0.06) & (~is_green_vegetation)
+        water_prob = np.where(is_true_water | is_deep_water, 0.95, 0.0)
 
-        # Feature 3: Buildings
-        # Roofs have distinct texture, high local gradient, and moderate to high brightness
+        # Non-vegetation, non-water ground mask
+        non_veg_mask = (tree_prob < 0.3) & (water_prob < 0.2)
+
+        # Feature 3: Buildings (Village Houses & Structures)
+        # 1. Bright Tin/Metal Roofs: High brightness compared to surrounding soil
+        is_tin_roof = (brightness > 130) & non_veg_mask
+        
+        # 2. Traditional Clay/Terracotta Roofs: Red-dominant (R > G and R > B) with distinct hue
+        is_clay_roof = (r > (g + 10)) & (r > (b + 14)) & (brightness > 60) & (brightness < 170) & (tree_prob < 0.2)
+
+        # 3. Structural Gradient Edges
         gray = cv2.cvtColor(
             np.transpose(rgb_data[:3], (1, 2, 0)).astype(np.uint8),
             cv2.COLOR_RGB2GRAY
         ) if rgb_data.shape[0] >= 3 else rgb_data[0].astype(np.uint8)
 
-        # Morphological gradient to highlight structural boundaries
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         morph_grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel)
-        
-        # Roof mask: areas with distinct tone that are NOT vegetation and NOT water
-        non_veg_mask = (tree_prob < 0.25) & (water_prob < 0.3)
-        roof_candidates = (morph_grad > 18) & non_veg_mask
-        
-        # Adaptive thresholding to segment individual roof planes
-        adapt_thresh = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 4
-        )
-        building_raw = (adapt_thresh > 0) & non_veg_mask
-        
-        # Filter small noise and clean roof blobs
-        building_clean = cv2.morphologyEx(building_raw.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-        building_prob = cv2.GaussianBlur(building_clean.astype(np.float32), (7, 7), 0)
-        building_prob = np.clip(building_prob * 1.4, 0.0, 0.95)
+        roof_edges = (morph_grad > 14) & non_veg_mask & ((is_tin_roof | is_clay_roof) | (brightness > 95))
+
+        building_raw = (is_tin_roof | is_clay_roof | roof_edges).astype(np.uint8)
+        building_clean = cv2.morphologyEx(building_raw, cv2.MORPH_CLOSE, kernel)
+        building_prob = cv2.GaussianBlur(building_clean.astype(np.float32), (5, 5), 0)
+        building_prob = np.clip(building_prob * 1.5, 0.0, 0.95)
 
         if ndsm is not None:
-            building_signal = ((ndsm >= 2.8) & (tree_prob < 0.3)).astype(np.float32)
+            building_signal = ((ndsm >= 2.5) & (tree_prob < 0.3)).astype(np.float32)
             building_prob = np.maximum(building_prob, building_signal * 0.94)
 
-        # Feature 4: Roads (Asphalt corridors with low saturation and linear continuity)
-        color_dev = np.std(rgb_data[:3], axis=0)  # Low color deviation = neutral gray asphalt/concrete
-        is_neutral = (color_dev < 15) & (brightness > 45) & (brightness < 185)
-        road_candidates = is_neutral & non_veg_mask & (building_prob < 0.4)
+        # Feature 4: Roads (Continuous neutral asphalt corridors)
+        color_dev = np.std(rgb_data[:3], axis=0)  # Neutral hue (asphalt has low saturation)
+        is_asphalt = (color_dev < 20) & (brightness > 40) & (brightness < 160) & non_veg_mask & (~is_clay_roof)
         
-        # Directional filtering for road corridors
-        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1))
-        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 9))
-        h_roads = cv2.morphologyEx(road_candidates.astype(np.uint8), cv2.MORPH_OPEN, h_kernel)
-        v_roads = cv2.morphologyEx(road_candidates.astype(np.uint8), cv2.MORPH_OPEN, v_kernel)
-        road_mask = (h_roads | v_roads).astype(np.float32)
-        road_prob = cv2.GaussianBlur(road_mask, (5, 5), 0)
-        road_prob = np.clip(road_prob * 1.5, 0.0, 0.95)
+        # Multidirectional morphology for linear highway corridor
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 2))
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 11))
+        d1_kernel = np.eye(9, dtype=np.uint8)
+        d2_kernel = np.fliplr(d1_kernel)
+
+        h_roads = cv2.morphologyEx(is_asphalt.astype(np.uint8), cv2.MORPH_OPEN, h_kernel)
+        v_roads = cv2.morphologyEx(is_asphalt.astype(np.uint8), cv2.MORPH_OPEN, v_kernel)
+        d1_roads = cv2.morphologyEx(is_asphalt.astype(np.uint8), cv2.MORPH_OPEN, d1_kernel)
+        d2_roads = cv2.morphologyEx(is_asphalt.astype(np.uint8), cv2.MORPH_OPEN, d2_kernel)
+
+        road_combined = (h_roads | v_roads | d1_roads | d2_roads).astype(np.float32)
+        road_prob = cv2.GaussianBlur(road_combined, (5, 5), 0)
+        road_prob = np.clip(road_prob * 1.6, 0.0, 0.95)
 
         if ndsm is not None:
             road_prob = np.where(ndsm < 1.2, road_prob, 0.0)
 
-        # Feature 5: Farms / Agriculture (Low vegetation, distinct from dense tree forest)
-        farm_prob = np.where((green_excess > 0.08) & (tree_prob < 0.3) & (building_prob < 0.2), 0.80, 0.0)
+        # Feature 5: Farms (Agricultural field plots - low ground vegetation distinct from forest)
+        farm_prob = np.where((green_excess > 0.04) & (tree_prob < 0.35) & (building_prob < 0.2), 0.85, 0.0)
         if ndsm is not None:
             farm_prob = np.where(ndsm < 1.0, farm_prob, 0.0)
 
