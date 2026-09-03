@@ -20,7 +20,7 @@ class BuildingRegularizer:
 
     def __init__(
         self,
-        min_building_area_sqm: float = 4.0,
+        min_building_area_sqm: float = 2.0,
         max_building_area_sqm: float = 380.0,
         max_aspect_ratio: float = 4.5,
         min_confidence_threshold: float = 0.70,
@@ -208,7 +208,7 @@ class BuildingRegularizer:
                 continue
 
             area_sqm = round(float((w_px * h_px) * (px_m ** 2)), 2)
-            if area_sqm < 8.0:
+            if area_sqm < 1.0:
                 continue
             features.append({
                 "type": "Feature",

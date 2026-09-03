@@ -67,6 +67,7 @@ document.addEventListener("DOMContentLoaded", () => {
   buildPipelineStages();
   paintSlider();
   startClock();
+  checkHardwareAcceleration();
 });
 
 window.addEventListener("load", () => {
@@ -643,4 +644,23 @@ function showInspector(layerName, props) {
 
 function hideInspector() {
   document.getElementById("inspectorPanel").classList.add("hidden");
+}
+
+async function checkHardwareAcceleration() {
+  try {
+    const res = await fetch("/api/health");
+    const data = await res.json();
+    const el = document.getElementById("gpuDisplay");
+    if (data && data.hardware && el) {
+      if (data.hardware.cuda_available) {
+        const cleanName = data.hardware.gpu_name.replace("NVIDIA ", "").replace(" Laptop GPU", "");
+        el.innerText = `${cleanName} (CUDA)`;
+        el.title = `Hardware Acceleration: ${data.hardware.gpu_name} (CUDA Active)`;
+      } else {
+        el.innerText = `${data.hardware.gpu_name} Mode`;
+      }
+    }
+  } catch (e) {
+    console.debug("Hardware check:", e);
+  }
 }

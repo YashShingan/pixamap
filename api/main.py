@@ -46,7 +46,16 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "healthy", "service": "PixaMap GeoAI Engine", "version": "1.0.0"}
+    return {
+        "status": "healthy",
+        "service": "PixaMap GeoAI Engine",
+        "version": "1.0.0",
+        "hardware": {
+            "device": str(getattr(ENGINE, "device", "cpu")),
+            "gpu_name": getattr(ENGINE, "gpu_name", "CPU"),
+            "cuda_available": hasattr(ENGINE, "device") and getattr(ENGINE, "device", None) is not None and getattr(ENGINE.device, "type", "") == "cuda"
+        }
+    }
 
 
 class AOIRequest(BaseModel):
