@@ -2,12 +2,6 @@
 
 **PixaMap** is a modular GeoAI platform designed to convert high-resolution drone and satellite orthophotos into structured, CAD/GIS-ready vector datasets at scale.
 
-Developed by **Team Zentropy** (Vasantdada Patil Pratishthan's College of Engineering and Visual Arts):
-* **Yash Shingan** — GIS Specialist & Spatial Data Lead
-* **Sakshi Kavade** — AI & Machine Learning Lead
-* **Manthan Sawant** — Backend & Database Engineer
-* **Shravan Manore** — Frontend & UI/UX Developer
-
 ---
 
 ## 🚀 Key Architectural Capabilities
