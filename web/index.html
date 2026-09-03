@@ -145,6 +145,32 @@
         </div>
       </div>
 
+      <!-- Vector Editor & Digitizer (HITL) -->
+      <div class="card editor-card">
+        <div class="card-head">
+          <h3><i class="fa-solid fa-pen-ruler"></i> Vector Editor & QC</h3>
+          <span class="card-badge">HITL</span>
+        </div>
+        <p class="editor-help-text">Click any shape on the map to inspect or delete. To add missed features, select a tool:</p>
+        <div class="digitize-toolbar">
+          <button class="btn btn-tool" id="toolBuilding" data-tool="buildings" title="Click & drag 90° CAD building box">
+            <i class="fa-solid fa-plus"></i> <i class="fa-solid fa-building" style="color:#fb923c"></i> Building
+          </button>
+          <button class="btn btn-tool" id="toolRoad" data-tool="roads" title="Click points on road, double-click to finish">
+            <i class="fa-solid fa-plus"></i> <i class="fa-solid fa-road" style="color:#facc15"></i> Road
+          </button>
+          <button class="btn btn-tool" id="toolTree" data-tool="trees" title="Click point on tree canopy">
+            <i class="fa-solid fa-plus"></i> <i class="fa-solid fa-tree" style="color:#4ade80"></i> Tree
+          </button>
+          <button class="btn btn-tool" id="toolWater" data-tool="water" title="Click & drag water body box">
+            <i class="fa-solid fa-plus"></i> <i class="fa-solid fa-water" style="color:#38bdf8"></i> Water
+          </button>
+          <button class="btn btn-tool" id="toolFarm" data-tool="farms" title="Click & drag farm parcel box">
+            <i class="fa-solid fa-plus"></i> <i class="fa-solid fa-wheat-awn" style="color:#a3e635"></i> Farm
+          </button>
+        </div>
+      </div>
+
       <!-- Export -->
       <div class="card export-card">
         <h3><i class="fa-solid fa-file-export"></i> GIS Ready Export</h3>
@@ -205,6 +231,18 @@
           <button id="btnCloseInspector" class="btn-icon" title="Esc">&times;</button>
         </div>
         <div id="inspectorContent" class="inspector-body"></div>
+        <div class="inspector-footer">
+          <button id="btnDeleteFeature" class="btn btn-danger" title="Delete selected feature (or press Del)">
+            <i class="fa-solid fa-trash-can"></i> Delete Feature
+          </button>
+        </div>
+      </div>
+
+      <!-- Digitizer Active Notification Floating Bar -->
+      <div id="digitizerFloatingBar" class="digitizer-bar hidden">
+        <span class="pulse-dot"></span>
+        <span id="digitizerBarText"><b>Digitizer Active:</b> Click and drag a box on the map</span>
+        <button id="btnCancelDigitize" class="btn btn-sm btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel (Esc)</button>
       </div>
     </main>
   </div>

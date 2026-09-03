@@ -4,7 +4,7 @@ FastAPI backend for automated orthophoto digitization, vectorization,
 and GIS-ready exports.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import os
 import uuid
 import numpy as np
@@ -218,6 +218,25 @@ def get_layer(task_id: str, layer_name: str):
         "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}},
         "features": features
     }
+
+
+class LayerSyncRequest(BaseModel):
+    layers: Dict[str, List[Dict[str, Any]]]
+    summary: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/layers/{task_id}/sync")
+def sync_task_layers(task_id: str, req: LayerSyncRequest):
+    """
+    Synchronizes client-side manual edits (deleted noisy boxes, newly digitized features)
+    back to the server session so exports match exactly what the user curated.
+    """
+    if task_id not in TASKS_DB:
+        TASKS_DB[task_id] = {"layers": {}, "summary": {}}
+    TASKS_DB[task_id]["layers"] = req.layers
+    if req.summary:
+        TASKS_DB[task_id]["summary"] = req.summary
+    return {"status": "success", "task_id": task_id}
 
 
 @app.get("/api/export/{task_id}/{format_type}")

@@ -73,6 +73,15 @@ out geom;"""
                 if len(coords) >= 3:
                     if coords[0] != coords[-1]:
                         coords.append(coords[0])
+
+                    # Filter out oversized campus / compound / zone boundaries (e.g. universities, military zones)
+                    lons = [c[0] for c in coords]
+                    lats = [c[1] for c in coords]
+                    dx_m = (max(lons) - min(lons)) * 105000.0
+                    dy_m = (max(lats) - min(lats)) * 111320.0
+                    approx_area_sqm = dx_m * dy_m
+                    if approx_area_sqm > 3000.0 or max(dx_m, dy_m) > 110.0:
+                        continue  # Skip giant compound / campus boundaries
                     buildings.append({
                         "type": "Feature",
                         "id": bid,
