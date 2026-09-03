@@ -1,9 +1,9 @@
 /**
- * PixaMap Interactive GIS Dashboard Controller — v2 "Deep-Space GeoAI"
- * NEW: pipeline overlay + scan effect, animated counters, toasts,
- *      live coordinate bar, click-to-toggle legend, hover highlights,
- *      confidence bars in inspector, QC flagged counter, splash screen.
- * All API endpoints & IDs unchanged.
+ * PixaMap — "Nebula" controller
+ * Radar splash · aurora theme (dark/light, persisted, key T) ·
+ * pipeline overlay · scan sweep · animated counters · toasts ·
+ * live coords + UTC clock · click-to-toggle legend · QC counter.
+ * All API endpoints & element IDs unchanged.
  */
 
 let map;
@@ -17,39 +17,63 @@ let aoiRectangleLayer = null;
 let isDrawingBox = false;
 let drawStartLatLng = null;
 
-/* ---------- Layer visual metadata ---------- */
+/* ---------- Theme ---------- */
+const THEME_KEY = "pixamap-theme";
+
+function initTheme() {
+  const theme = localStorage.getItem(THEME_KEY) || "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+  paintThemeButton(theme);
+}
+
+function toggleTheme() {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_KEY, next);
+  paintThemeButton(next);
+  toast("info", next === "dark" ? "Midnight mode" : "Daylight mode", "Theme switched.");
+}
+
+function paintThemeButton(theme) {
+  document.getElementById("btnThemeToggle").innerHTML =
+    theme === "dark" ? `<i class="fa-solid fa-sun"></i>` : `<i class="fa-solid fa-moon"></i>`;
+}
+
+/* ---------- Layer metadata ---------- */
 const LAYER_META = {
-  buildings: { color: "#fb923c", fill: "#fb923c", label: "Building Footprint (90° Snap)", icon: "fa-building" },
-  roads:     { color: "#facc15", fill: "#facc15", label: "Road Centerline Graph",        icon: "fa-road" },
-  trees:     { color: "#4ade80", fill: "#4ade80", label: "Tree Inventory (3D Height)",   icon: "fa-tree" },
-  farms:     { color: "#a3e635", fill: "#a3e635", label: "Farm Parcel Boundary",         icon: "fa-wheat-awn" },
-  water:     { color: "#38bdf8", fill: "#0ea5e9", label: "Water Body",                   icon: "fa-water" },
+  buildings: { color: "#fb923c", fill: "#fb923c", label: "Building Footprint · 90° Snap", icon: "fa-building" },
+  roads:     { color: "#facc15", fill: "#facc15", label: "Road Centerline Graph",          icon: "fa-road" },
+  trees:     { color: "#4ade80", fill: "#4ade80", label: "Tree Inventory · 3D Height",     icon: "fa-tree" },
+  farms:     { color: "#a3e635", fill: "#a3e635", label: "Farm Parcel Boundary",           icon: "fa-wheat-awn" },
+  water:     { color: "#38bdf8", fill: "#0ea5e9", label: "Water Body",                     icon: "fa-water" },
 };
 
 const PIPELINE_STAGES = [
-  { icon: "fa-satellite",       label: "Fetching satellite imagery" },
-  { icon: "fa-brain",           label: "Neural segmentation (Deep Learning)" },
-  { icon: "fa-vector-square",   label: "Feature vectorization" },
-  { icon: "fa-ruler-combined",  label: "90° footprint regularization" },
-  { icon: "fa-shield-halved",   label: "Confidence scoring & QC" },
-  { icon: "fa-layer-group",     label: "Packaging GIS layers" },
+  { icon: "fa-satellite",      label: "Fetching satellite imagery" },
+  { icon: "fa-brain",          label: "Neural segmentation (Deep Learning)" },
+  { icon: "fa-vector-square",  label: "Feature vectorization" },
+  { icon: "fa-ruler-combined", label: "90° footprint regularization" },
+  { icon: "fa-shield-halved",  label: "Confidence scoring & QC" },
+  { icon: "fa-layer-group",    label: "Packaging GIS layers" },
 ];
 
 /* =====================  INIT  ===================== */
 document.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   initMap();
   setupEventListeners();
   setupAOIDrawing();
   setupLegend();
   buildPipelineStages();
   paintSlider();
+  startClock();
 });
 
 window.addEventListener("load", () => {
   setTimeout(() => {
     const s = document.getElementById("splashScreen");
     if (s) s.classList.add("splash-hide");
-  }, 1500);
+  }, 1700);
 });
 
 function initMap() {
@@ -66,14 +90,26 @@ function initMap() {
     subdomains: "abcd", maxZoom: 19
   }).addTo(map);
 
-  // Live status bar
   const coordEl = document.getElementById("coordDisplay");
   const zoomEl = document.getElementById("zoomDisplay");
   map.on("mousemove", (e) => {
-    coordEl.textContent = `${e.latlng.lat.toFixed(5)}°, ${e.latlng.lng.toFixed(5)}°`;
+    coordEl.textContent =
+      `${Math.abs(e.latlng.lat).toFixed(5)}° ${e.latlng.lat >= 0 ? "N" : "S"}, ` +
+      `${Math.abs(e.latlng.lng).toFixed(5)}° ${e.latlng.lng >= 0 ? "E" : "W"}`;
   });
   map.on("zoomend", () => { zoomEl.textContent = map.getZoom(); });
   zoomEl.textContent = map.getZoom();
+}
+
+function startClock() {
+  const el = document.getElementById("statusClock");
+  const tick = () => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    el.textContent = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+  };
+  tick();
+  setInterval(tick, 1000);
 }
 
 /* =====================  EVENT LISTENERS  ===================== */
@@ -81,6 +117,8 @@ function setupEventListeners() {
   document.getElementById("btnRunDemo").addEventListener("click", runDemoPipeline);
   document.getElementById("btnCurrentView").addEventListener("click", selectCurrentViewAOI);
   document.getElementById("btnExtractAOI").addEventListener("click", runAOIExtraction);
+  document.getElementById("btnClearAOI").addEventListener("click", clearAOI);
+  document.getElementById("btnThemeToggle").addEventListener("click", toggleTheme);
 
   const toggles = [
     ["chkBuildings", "buildings"], ["chkRoads", "roads"], ["chkTrees", "trees"],
@@ -115,13 +153,24 @@ function setupEventListeners() {
   });
 
   document.getElementById("btnCloseInspector").addEventListener("click", hideInspector);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideInspector(); });
+
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") return;
+    if (e.key === "Escape") {
+      if (isDrawingBox) resetDrawMode();
+      hideInspector();
+    }
+    if (e.key.toLowerCase() === "d") document.getElementById("btnDrawBox").click();
+    if (e.key.toLowerCase() === "v") selectCurrentViewAOI();
+    if (e.key.toLowerCase() === "t") toggleTheme();
+  });
 }
 
 function paintSlider() {
   const el = document.getElementById("rngConfidence");
   const p = ((el.value - el.min) / (el.max - el.min)) * 100;
-  el.style.background = `linear-gradient(90deg, #22d3ee ${p}%, rgba(255,255,255,0.12) ${p}%)`;
+  el.style.setProperty("--fill", p + "%");
 }
 
 /* =====================  LEGEND  ===================== */
@@ -222,9 +271,19 @@ function setAOIBounds(bounds) {
   const areaHa = (areaSqm / 10000.0).toFixed(2);
 
   document.getElementById("aoiAreaText").innerHTML =
-    `<b>${areaHa} ha</b> (${areaSqm > 1e6 ? (areaSqm / 1e6).toFixed(2) + " km²" : Math.round(areaSqm).toLocaleString() + " m²"})`;
+    `<b>${areaHa} ha</b> selected · ready to extract`;
   document.getElementById("btnExtractAOI").disabled = false;
+  document.getElementById("btnClearAOI").classList.remove("hidden");
   toast("info", "AOI selected", `${areaHa} hectares ready for extraction.`);
+}
+
+function clearAOI() {
+  currentAOIBounds = null;
+  if (aoiRectangleLayer) { map.removeLayer(aoiRectangleLayer); aoiRectangleLayer = null; }
+  document.getElementById("aoiAreaText").innerHTML =
+    `Click <b>Drag Box</b> and sweep an area on the map`;
+  document.getElementById("btnExtractAOI").disabled = true;
+  document.getElementById("btnClearAOI").classList.add("hidden");
 }
 
 /* =====================  PIPELINE OVERLAY  ===================== */
@@ -243,11 +302,7 @@ let stageTimer = null;
 function startPipeline() {
   buildPipelineStages();
   const rows = [...document.querySelectorAll("#pipelineStages .stage")];
-  const overlay = document.getElementById("processingOverlay");
-  const fill = document.getElementById("pipelineProgress");
-  const sub = document.getElementById("pipelineSub");
-
-  overlay.classList.remove("hidden");
+  document.getElementById("processingOverlay").classList.remove("hidden");
   document.getElementById("mapWrapper").classList.add("scanning");
 
   let idx = 0;
@@ -257,8 +312,10 @@ function startPipeline() {
       r.querySelector("i").className =
         j < i ? "fa-solid fa-check" : `fa-solid ${PIPELINE_STAGES[j].icon}`;
     });
-    fill.style.width = `${((i + 0.5) / PIPELINE_STAGES.length) * 100}%`;
-    sub.textContent = PIPELINE_STAGES[Math.min(i, PIPELINE_STAGES.length - 1)].label + "…";
+    document.getElementById("pipelineProgress").style.width =
+      `${((i + 0.5) / PIPELINE_STAGES.length) * 100}%`;
+    document.getElementById("pipelineSub").textContent =
+      PIPELINE_STAGES[Math.min(i, PIPELINE_STAGES.length - 1)].label + "…";
   };
   setStage(0);
 
@@ -329,6 +386,11 @@ function updateSummaryMetrics(summary) {
 }
 
 /* =====================  EXTRACTION RUNS  ===================== */
+function hideEmptyHint() {
+  const h = document.getElementById("emptyHint");
+  if (h) h.classList.add("gone");
+}
+
 async function runAOIExtraction() {
   if (!currentAOIBounds) return;
   const btn = document.getElementById("btnExtractAOI");
@@ -366,7 +428,7 @@ async function runAOIExtraction() {
     toast("error", "Network error", err.message);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-bolt"></i> Extract GIS for Selected Area`;
+    btn.innerHTML = `<i class="fa-solid fa-bolt"></i> Extract GIS Features`;
   }
 }
 
@@ -416,6 +478,7 @@ async function loadAllLayers(taskId) {
   }
   applyConfidenceFilter(currentThreshold);
   syncLegend();
+  hideEmptyHint();
 }
 
 function getLayerStyle(name, props, state = "normal") {
@@ -447,7 +510,6 @@ function getLayerStyle(name, props, state = "normal") {
   if (name === "water") {
     return { color: m.color, weight: hover ? 3.5 : 2, fillColor: m.fill, fillOpacity: 0.62 };
   }
-  // buildings
   return {
     color: low ? "#f87171" : m.color, weight: hover ? 3.5 : 2,
     fillColor: low ? "#f87171" : m.color, fillOpacity: low ? 0.75 : 0.55
@@ -460,7 +522,7 @@ function attachHover(layer, name, props) {
     if (layer.bringToFront) layer.bringToFront();
   });
   layer.on("mouseout", () => layer.setStyle(getLayerStyle(name, props)));
-  layer.on("click", () => showInspector(name, LAYER_META[name].label, props));
+  layer.on("click", () => showInspector(name, props));
 }
 
 function renderLayer(name, geojson) {
@@ -514,19 +576,19 @@ function updateFlaggedCount(threshold) {
   });
   const el = document.getElementById("qcFlagCount");
   el.innerHTML = total
-    ? `<i class="fa-solid fa-flag"></i> <b>${flagged}</b> of ${total} features flagged for review`
-    : `<i class="fa-solid fa-flag"></i> No features loaded`;
+    ? `<i class="fa-regular fa-flag"></i> <b>${flagged}</b> of ${total} features flagged for review`
+    : `<i class="fa-regular fa-flag"></i> No features loaded`;
   el.classList.toggle("has-flags", flagged > 0);
 }
 
 /* =====================  INSPECTOR  ===================== */
-function showInspector(layerName, title, props) {
-  const meta = LAYER_META[layerName] || { color: "#22d3ee", icon: "fa-circle-info" };
+function showInspector(layerName, props) {
+  const meta = LAYER_META[layerName] || { color: "#22d3ee", icon: "fa-circle-info", label: "Feature" };
   const panel = document.getElementById("inspectorPanel");
-  panel.style.setProperty("--ins-accent", meta.color);
+  panel.style.setProperty("--ins-color", meta.color);
 
-  document.getElementById("inspectorTitle").innerHTML =
-    `<i class="fa-solid ${meta.icon}"></i> ${title}`;
+  document.getElementById("inspectorTitle").querySelector(".feat-title").textContent =
+    meta.label;
 
   const container = document.getElementById("inspectorContent");
   container.innerHTML = "";
@@ -542,17 +604,22 @@ function showInspector(layerName, title, props) {
     return val;
   };
 
-  for (const [key, val] of Object.entries(props)) {
-    if (key === "confidence_score") continue;
+  const addRow = (key, valHTML) => {
     const row = document.createElement("div");
     row.className = "attr-row";
     row.innerHTML = `
-      <span class="attr-key">${key.replace(/_/g, " ")}:</span>
-      <span class="attr-val">${fmt(key, val)}</span>`;
+      <span class="attr-key">${key.replace(/_/g, " ")}</span>
+      <span class="attr-leader"></span>
+      <span class="attr-val">${valHTML}</span>`;
     container.appendChild(row);
+  };
+
+  for (const [key, val] of Object.entries(props)) {
+    if (key === "confidence_score") continue;
+    addRow(key, fmt(key, val));
   }
 
-  // Confidence bar with threshold marker
+  // Gradient confidence bar with threshold marker
   if (props.confidence_score != null) {
     const c = +props.confidence_score;
     const ok = c >= currentThreshold;
@@ -561,7 +628,7 @@ function showInspector(layerName, title, props) {
     block.innerHTML = `
       <div class="conf-head">
         <span>Model Confidence</span>
-        <b style="color:${ok ? "var(--green)" : "var(--amber)"}">${(c * 100).toFixed(1)}%</b>
+        <b style="color:${ok ? "var(--ok)" : "var(--warn)"}">${(c * 100).toFixed(1)}%</b>
       </div>
       <div class="conf-track">
         <div class="conf-fill" style="width:${(c * 100).toFixed(1)}%;
