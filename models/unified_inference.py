@@ -202,10 +202,10 @@ class UnifiedGeoAIEngine:
         if ndsm is not None:
             road_prob = np.where(ndsm < 1.2, road_prob, 0.0)
 
-        # Feature 5: Farms (Contiguous vegetation patches)
-        farm_prob = np.where((tree_prob > 0.3) & (building_prob < 0.2), 0.85, 0.0)
+        # Feature 5: Farms / Agriculture (Low vegetation, distinct from dense tree forest)
+        farm_prob = np.where((green_excess > 0.08) & (tree_prob < 0.3) & (building_prob < 0.2), 0.80, 0.0)
         if ndsm is not None:
-            farm_prob = np.where(ndsm < 1.5, farm_prob, 0.0)
+            farm_prob = np.where(ndsm < 1.0, farm_prob, 0.0)
 
         return {
             "buildings": building_prob.astype(np.float32),

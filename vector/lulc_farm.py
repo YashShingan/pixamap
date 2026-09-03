@@ -112,6 +112,8 @@ class LULCAndFarmExtractor:
                 continue
 
             area_sqm = round(float(area_px * (self.pixel_size_meters ** 2)), 2)
+            if area_sqm > 50000.0:
+                continue
             area_hectares = round(area_sqm / 10000.0, 3)
 
             feature = {
@@ -186,6 +188,8 @@ class LULCAndFarmExtractor:
                 continue
 
             area_sqm = round(float(area_px * (self.pixel_size_meters ** 2)), 2)
+            if area_sqm > 250000.0:
+                continue
 
             feature = {
                 "type": "Feature",

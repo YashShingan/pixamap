@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from core.geo_reader import GeoRaster, read_geotiff
 from core.tile_fetcher import SatelliteTileFetcher
+from core.osm_fetcher import OSMReferenceFetcher
 from models.unified_inference import UnifiedGeoAIEngine
 from vector.gis_exporter import GISExporter
 
@@ -75,6 +76,31 @@ def extract_aoi(req: AOIRequest):
 
         # Run multi-feature extraction on real imagery
         results = ENGINE.process_raster(ortho_raster)
+
+        # Fetch verified ground-truth reference GIS layers (OSM Overpass)
+        osm_data = OSMReferenceFetcher.fetch_reference_layers(
+            min_lon=req.min_lon,
+            min_lat=req.min_lat,
+            max_lon=req.max_lon,
+            max_lat=req.max_lat
+        )
+
+        # Augment with verified ground-truth roads and buildings
+        if osm_data.get("roads"):
+            results["layers"]["roads"].extend(osm_data["roads"])
+        if osm_data.get("buildings"):
+            results["layers"]["buildings"].extend(osm_data["buildings"])
+        if osm_data.get("water"):
+            results["layers"]["water"].extend(osm_data["water"])
+
+        # Update summary counts
+        results["summary"]["building_count"] = len(results["layers"]["buildings"])
+        results["summary"]["road_segment_count"] = len(results["layers"]["roads"])
+        results["summary"]["total_road_km"] = round(
+            sum(f["properties"].get("length_m", 45.0) for f in results["layers"]["roads"]) / 1000.0, 3
+        )
+        results["summary"]["water_body_count"] = len(results["layers"]["water"])
+
         TASKS_DB[task_id] = results
 
         return {
