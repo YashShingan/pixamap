@@ -99,8 +99,15 @@ class LULCAndFarmExtractor:
                     poly = make_valid(poly)
                 if poly.is_empty:
                     continue
-                if isinstance(poly, MultiPolygon):
+                if poly.geom_type == "GeometryCollection":
+                    sub_polys = [g for g in poly.geoms if g.geom_type in ["Polygon", "MultiPolygon"]]
+                    if not sub_polys:
+                        continue
+                    poly = max(sub_polys, key=lambda p: p.area)
+                if poly.geom_type == "MultiPolygon":
                     poly = max(poly.geoms, key=lambda p: p.area)
+                if poly.geom_type != "Polygon" or poly.is_empty:
+                    continue
             except Exception:
                 continue
 
@@ -166,8 +173,15 @@ class LULCAndFarmExtractor:
                     poly = make_valid(poly)
                 if poly.is_empty:
                     continue
-                if isinstance(poly, MultiPolygon):
+                if poly.geom_type == "GeometryCollection":
+                    sub_polys = [g for g in poly.geoms if g.geom_type in ["Polygon", "MultiPolygon"]]
+                    if not sub_polys:
+                        continue
+                    poly = max(sub_polys, key=lambda p: p.area)
+                if poly.geom_type == "MultiPolygon":
                     poly = max(poly.geoms, key=lambda p: p.area)
+                if poly.geom_type != "Polygon" or poly.is_empty:
+                    continue
             except Exception:
                 continue
 

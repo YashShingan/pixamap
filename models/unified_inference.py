@@ -135,44 +135,75 @@ class UnifiedGeoAIEngine:
 
         h, w = r.shape
 
-        # Spectral Indices
-        green_excess = (2.0 * g - r - b) / (r + g + b + 1e-6)
+        # Spectral Indices on real RGB
+        total_rgb = r + g + b + 1e-6
+        norm_r = r / total_rgb
+        norm_g = g / total_rgb
+        norm_b = b / total_rgb
+
+        # Excess Green Index for vegetation / trees
+        green_excess = 2.0 * norm_g - norm_r - norm_b
         brightness = (r + g + b) / 3.0
 
-        # Feature 1: Trees (Green + Elevated above ground via nDSM if available)
-        tree_prob = np.clip((green_excess - 0.05) * 2.5, 0.0, 1.0)
+        # Feature 1: Trees & Canopy (Green excess > threshold and non-road)
+        tree_prob = np.clip((green_excess - 0.04) * 5.0, 0.0, 1.0)
         if ndsm is not None:
-            # Trees must have height >= 2.0m
-            tree_prob = np.where(ndsm >= 2.0, tree_prob, tree_prob * 0.2)
+            tree_prob = np.where(ndsm >= 2.0, tree_prob, tree_prob * 0.15)
 
-        # Feature 2: Buildings (Geometric brightness + elevated nDSM >= 3.0m)
+        # Feature 2: Water Bodies (Dark, high blue ratio or very low brightness)
+        blue_ratio = norm_b - norm_r
+        water_prob = np.where((blue_ratio > 0.05) & (brightness < 90), 0.95, 0.0)
+        water_prob = np.where((brightness < 35), 0.85, water_prob)
+
+        # Feature 3: Buildings
+        # Roofs have distinct texture, high local gradient, and moderate to high brightness
         gray = cv2.cvtColor(
             np.transpose(rgb_data[:3], (1, 2, 0)).astype(np.uint8),
             cv2.COLOR_RGB2GRAY
         ) if rgb_data.shape[0] >= 3 else rgb_data[0].astype(np.uint8)
 
-        # Detect roof edge features
-        edges = cv2.Canny(gray, 50, 150)
-        building_prob = cv2.GaussianBlur(edges.astype(np.float32) / 255.0, (15, 15), 0)
-        building_prob = np.clip(building_prob * 3.0, 0.0, 0.95)
+        # Morphological gradient to highlight structural boundaries
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        morph_grad = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel)
+        
+        # Roof mask: areas with distinct tone that are NOT vegetation and NOT water
+        non_veg_mask = (tree_prob < 0.25) & (water_prob < 0.3)
+        roof_candidates = (morph_grad > 18) & non_veg_mask
+        
+        # Adaptive thresholding to segment individual roof planes
+        adapt_thresh = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 4
+        )
+        building_raw = (adapt_thresh > 0) & non_veg_mask
+        
+        # Filter small noise and clean roof blobs
+        building_clean = cv2.morphologyEx(building_raw.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+        building_prob = cv2.GaussianBlur(building_clean.astype(np.float32), (7, 7), 0)
+        building_prob = np.clip(building_prob * 1.4, 0.0, 0.95)
 
         if ndsm is not None:
-            # Elevated structures with height between 3.0m and 60m are buildings
-            building_signal = ((ndsm >= 3.0) & (tree_prob < 0.3)).astype(np.float32)
-            building_prob = np.maximum(building_prob, building_signal * 0.92)
+            building_signal = ((ndsm >= 2.8) & (tree_prob < 0.3)).astype(np.float32)
+            building_prob = np.maximum(building_prob, building_signal * 0.94)
 
-        # Feature 3: Roads (Low greenness, medium brightness, elongated structures)
-        road_prob = np.clip(1.0 - (green_excess * 2.0) - (tree_prob * 1.5), 0.0, 0.9)
+        # Feature 4: Roads (Asphalt corridors with low saturation and linear continuity)
+        color_dev = np.std(rgb_data[:3], axis=0)  # Low color deviation = neutral gray asphalt/concrete
+        is_neutral = (color_dev < 15) & (brightness > 45) & (brightness < 185)
+        road_candidates = is_neutral & non_veg_mask & (building_prob < 0.4)
+        
+        # Directional filtering for road corridors
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1))
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 9))
+        h_roads = cv2.morphologyEx(road_candidates.astype(np.uint8), cv2.MORPH_OPEN, h_kernel)
+        v_roads = cv2.morphologyEx(road_candidates.astype(np.uint8), cv2.MORPH_OPEN, v_kernel)
+        road_mask = (h_roads | v_roads).astype(np.float32)
+        road_prob = cv2.GaussianBlur(road_mask, (5, 5), 0)
+        road_prob = np.clip(road_prob * 1.5, 0.0, 0.95)
+
         if ndsm is not None:
-            # Roads must be at ground level (nDSM < 1.0m)
-            road_prob = np.where(ndsm < 1.0, road_prob, 0.0)
+            road_prob = np.where(ndsm < 1.2, road_prob, 0.0)
 
-        # Feature 4: Water (Low brightness or blue-dominated absorption)
-        water_prob = np.clip((b - r) / (b + r + 1e-6), 0.0, 1.0)
-        water_prob = np.where((b > r) & (b > g) & (brightness < 120), 0.95, 0.0)
-
-        # Feature 5: Farms (Vegetation at ground level)
-        farm_prob = np.clip(green_excess * 1.8, 0.0, 1.0)
+        # Feature 5: Farms (Contiguous vegetation patches)
+        farm_prob = np.where((tree_prob > 0.3) & (building_prob < 0.2), 0.85, 0.0)
         if ndsm is not None:
             farm_prob = np.where(ndsm < 1.5, farm_prob, 0.0)
 

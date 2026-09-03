@@ -14,7 +14,9 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
+from pydantic import BaseModel
 from core.geo_reader import GeoRaster, read_geotiff
+from core.tile_fetcher import SatelliteTileFetcher
 from models.unified_inference import UnifiedGeoAIEngine
 from vector.gis_exporter import GISExporter
 
@@ -44,6 +46,44 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 @app.get("/api/health")
 def health_check():
     return {"status": "healthy", "service": "PixaMap GeoAI Engine", "version": "1.0.0"}
+
+
+class AOIRequest(BaseModel):
+    min_lon: float
+    min_lat: float
+    max_lon: float
+    max_lat: float
+    zoom: Optional[int] = 17
+
+
+@app.post("/api/extract_aoi")
+def extract_aoi(req: AOIRequest):
+    """
+    Downloads real-world satellite imagery for the user-selected Area of Interest (AOI),
+    runs multi-modal GeoAI feature extraction, and returns structured GIS metrics.
+    """
+    task_id = str(uuid.uuid4())[:8]
+    try:
+        # Fetch actual high-res satellite imagery mosaic for the exact bounding box
+        ortho_raster = SatelliteTileFetcher.fetch_aoi_raster(
+            min_lon=req.min_lon,
+            min_lat=req.min_lat,
+            max_lon=req.max_lon,
+            max_lat=req.max_lat,
+            zoom=req.zoom or 17
+        )
+
+        # Run multi-feature extraction on real imagery
+        results = ENGINE.process_raster(ortho_raster)
+        TASKS_DB[task_id] = results
+
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "summary": results["summary"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AOI extraction failed: {str(e)}")
 
 
 @app.post("/api/demo")

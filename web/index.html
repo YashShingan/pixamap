@@ -22,12 +22,30 @@
         </div>
       </div>
 
+      <!-- Interactive Area Selection (AOI) -->
+      <div class="card aoi-card">
+        <h3><i class="fa-solid fa-draw-polygon"></i> Area of Interest (AOI)</h3>
+        <div class="btn-group" style="display: flex; gap: 6px; margin-bottom: 8px;">
+          <button id="btnDrawBox" class="btn btn-secondary" style="flex: 1; font-size: 11px; padding: 8px;">
+            <i class="fa-solid fa-vector-square"></i> Drag Box
+          </button>
+          <button id="btnCurrentView" class="btn btn-secondary" style="flex: 1; font-size: 11px; padding: 8px;">
+            <i class="fa-solid fa-crosshairs"></i> Current View
+          </button>
+        </div>
+        <div id="aoiInfo" class="aoi-info-box" style="background: rgba(0,0,0,0.25); padding: 8px; border-radius: 6px; font-size: 11px; margin-bottom: 8px; border: 1px dashed var(--card-border);">
+          <div style="color: var(--text-secondary);"><i class="fa-solid fa-location-dot"></i> <span id="aoiAreaText">Click 'Drag Box' to select an area</span></div>
+        </div>
+        <button id="btnExtractAOI" class="btn btn-primary" disabled>
+          <i class="fa-solid fa-bolt"></i> Extract GIS for Selected Area
+        </button>
+      </div>
+
       <!-- Quick Action: Demo / Upload -->
       <div class="card action-card">
-        <button id="btnRunDemo" class="btn btn-primary">
-          <i class="fa-solid fa-wand-magic-sparkles"></i> Run Live GeoAI Pipeline
+        <button id="btnRunDemo" class="btn btn-secondary" style="font-size: 12px;">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Run Synthetic Demo Scene
         </button>
-        <div class="caption">Executes multi-modal extraction & orthogonal regularizer</div>
       </div>
 
       <!-- Processing Summary Metrics -->

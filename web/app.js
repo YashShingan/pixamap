@@ -1,5 +1,14 @@
 /**
  * PixaMap Interactive GIS Dashboard Controller
+ * Features:
+ * - Dynamic Satellite Basemap
+ * - Interactive AOI (Area of Interest) Selection & Drag Box Tool
+ * - Real Satellite Tile Feature Extraction on Selected Bounds
+ * - Regularized Building Footprints (90° Snap)
+ * - Topological Road Centerlines (LineString)
+ * - 3D Tree Inventory with Height Attribution
+ * - Human-in-the-Loop QC Confidence Filtering
+ * - Multi-Format GIS Export (.shp.zip, .geojson)
  */
 
 let map;
@@ -13,14 +22,20 @@ let leafletLayers = {
   water: null
 };
 
+let currentAOIBounds = null;
+let aoiRectangleLayer = null;
+let isDrawingBox = false;
+let drawStartLatLng = null;
+
 // Initialize Map
 document.addEventListener("DOMContentLoaded", () => {
   initMap();
   setupEventListeners();
+  setupAOIDrawing();
 });
 
 function initMap() {
-  // Center on Mumbai coordinates (72.8777, 19.0760)
+  // Center on Mumbai coordinates (72.873, 19.073)
   map = L.map("map", {
     zoomControl: false
   }).setView([19.073, 72.873], 16);
@@ -29,7 +44,7 @@ function initMap() {
 
   // Basemap: High-Resolution Satellite & CartoDB Dark
   const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-    attribution: "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
+    attribution: "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics",
     maxZoom: 19
   }).addTo(map);
 
@@ -41,6 +56,8 @@ function initMap() {
 
 function setupEventListeners() {
   document.getElementById("btnRunDemo").addEventListener("click", runDemoPipeline);
+  document.getElementById("btnCurrentView").addEventListener("click", selectCurrentViewAOI);
+  document.getElementById("btnExtractAOI").addEventListener("click", runAOIExtraction);
 
   // Layer switches
   document.getElementById("chkBuildings").addEventListener("change", (e) => toggleLayer("buildings", e.target.checked));
@@ -71,10 +88,155 @@ function setupEventListeners() {
   });
 }
 
+function setupAOIDrawing() {
+  const btnDraw = document.getElementById("btnDrawBox");
+
+  btnDraw.addEventListener("click", () => {
+    isDrawingBox = !isDrawingBox;
+    if (isDrawingBox) {
+      btnDraw.classList.add("btn-primary");
+      btnDraw.classList.remove("btn-secondary");
+      btnDraw.innerHTML = `<i class="fa-solid fa-hand"></i> Click & Drag on Map`;
+      map.getContainer().style.cursor = "crosshair";
+      map.dragging.disable();
+    } else {
+      resetDrawMode();
+    }
+  });
+
+  map.on("mousedown", (e) => {
+    if (!isDrawingBox) return;
+    drawStartLatLng = e.latlng;
+
+    if (aoiRectangleLayer) {
+      map.removeLayer(aoiRectangleLayer);
+      aoiRectangleLayer = null;
+    }
+
+    const bounds = L.latLngBounds(drawStartLatLng, drawStartLatLng);
+    aoiRectangleLayer = L.rectangle(bounds, {
+      color: "#06b6d4",
+      weight: 2,
+      dashArray: "6, 6",
+      fillColor: "#06b6d4",
+      fillOpacity: 0.15
+    }).addTo(map);
+  });
+
+  map.on("mousemove", (e) => {
+    if (!isDrawingBox || !drawStartLatLng || !aoiRectangleLayer) return;
+    const currentBounds = L.latLngBounds(drawStartLatLng, e.latlng);
+    aoiRectangleLayer.setBounds(currentBounds);
+  });
+
+  map.on("mouseup", (e) => {
+    if (!isDrawingBox || !drawStartLatLng) return;
+    const endLatLng = e.latlng;
+    const bounds = L.latLngBounds(drawStartLatLng, endLatLng);
+
+    // Ensure minimum area
+    if (bounds.getNorthEast().distanceTo(bounds.getSouthWest()) > 20) {
+      setAOIBounds(bounds);
+    }
+
+    drawStartLatLng = null;
+    resetDrawMode();
+  });
+}
+
+function resetDrawMode() {
+  isDrawingBox = false;
+  const btnDraw = document.getElementById("btnDrawBox");
+  btnDraw.classList.remove("btn-primary");
+  btnDraw.classList.add("btn-secondary");
+  btnDraw.innerHTML = `<i class="fa-solid fa-vector-square"></i> Drag Box`;
+  map.getContainer().style.cursor = "";
+  map.dragging.enable();
+}
+
+function selectCurrentViewAOI() {
+  const bounds = map.getBounds();
+  setAOIBounds(bounds);
+}
+
+function setAOIBounds(bounds) {
+  if (aoiRectangleLayer) {
+    map.removeLayer(aoiRectangleLayer);
+  }
+
+  aoiRectangleLayer = L.rectangle(bounds, {
+    color: "#06b6d4",
+    weight: 2.5,
+    dashArray: "6, 6",
+    fillColor: "#06b6d4",
+    fillOpacity: 0.12
+  }).addTo(map);
+
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+
+  currentAOIBounds = {
+    min_lon: Math.min(sw.lng, ne.lng),
+    min_lat: Math.min(sw.lat, ne.lat),
+    max_lon: Math.max(sw.lng, ne.lng),
+    max_lat: Math.max(sw.lat, ne.lat)
+  };
+
+  // Compute approximate area in hectares
+  const latDist = (currentAOIBounds.max_lat - currentAOIBounds.min_lat) * 111320;
+  const lonDist = (currentAOIBounds.max_lon - currentAOIBounds.min_lon) * 111320 * Math.cos((currentAOIBounds.min_lat + currentAOIBounds.max_lat) * Math.PI / 360);
+  const areaSqm = Math.abs(latDist * lonDist);
+  const areaHa = (areaSqm / 10000.0).toFixed(2);
+
+  document.getElementById("aoiAreaText").innerHTML = `<b>${areaHa} ha</b> (${areaSqm > 1e6 ? (areaSqm / 1e6).toFixed(2) + ' km²' : Math.round(areaSqm).toLocaleString() + ' m²'})`;
+  document.getElementById("btnExtractAOI").disabled = false;
+}
+
+async function runAOIExtraction() {
+  if (!currentAOIBounds) return;
+
+  const btn = document.getElementById("btnExtractAOI");
+  btn.disabled = true;
+  btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Fetching & Extracting Real Satellite Features...`;
+
+  try {
+    const res = await fetch("/api/extract_aoi", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        min_lon: currentAOIBounds.min_lon,
+        min_lat: currentAOIBounds.min_lat,
+        max_lon: currentAOIBounds.max_lon,
+        max_lat: currentAOIBounds.max_lat,
+        zoom: 17
+      })
+    });
+
+    const data = await res.json();
+    if (data.status === "success") {
+      currentTaskId = data.task_id;
+      updateSummaryMetrics(data.summary);
+      await loadAllLayers(data.task_id);
+
+      // Enable export buttons
+      document.getElementById("btnExportZip").disabled = false;
+      document.getElementById("btnExportGeoJSON").disabled = false;
+    } else {
+      alert("Extraction failed: " + (data.detail || "Unknown error"));
+    }
+  } catch (err) {
+    console.error("Error during AOI extraction:", err);
+    alert("Extraction error: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<i class="fa-solid fa-bolt"></i> Extract GIS for Selected Area`;
+  }
+}
+
 async function runDemoPipeline() {
   const btn = document.getElementById("btnRunDemo");
   btn.disabled = true;
-  btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Processing GeoAI Pipeline...`;
+  btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Processing Demo Scene...`;
 
   try {
     const res = await fetch("/api/demo", { method: "POST" });
@@ -98,7 +260,7 @@ async function runDemoPipeline() {
     alert("Pipeline execution failed: " + err.message);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Re-Run GeoAI Pipeline`;
+    btn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Run Synthetic Demo Scene`;
   }
 }
 
@@ -150,8 +312,8 @@ function renderLayer(name, geojson) {
     layerGroup = L.geoJSON(geojson, {
       style: {
         color: "#ffeb3b",
-        weight: 4,
-        opacity: 0.9,
+        weight: 3.5,
+        opacity: 0.95,
         lineCap: "round",
         lineJoin: "round"
       },
@@ -162,14 +324,14 @@ function renderLayer(name, geojson) {
   } else if (name === "trees") {
     layerGroup = L.geoJSON(geojson, {
       pointToLayer: (feature, latlng) => {
-        const rad = Math.max(5, (feature.properties.crown_diameter_m || 2) * 2.5);
+        const rad = Math.max(4, Math.min(12, (feature.properties.crown_diameter_m || 2) * 2));
         return L.circleMarker(latlng, {
           radius: rad,
           fillColor: "#4caf50",
           color: "#2e7d32",
-          weight: 2,
+          weight: 1.5,
           opacity: 0.9,
-          fillOpacity: 0.7
+          fillOpacity: 0.75
         });
       },
       onEachFeature: (feat, layer) => {
@@ -180,10 +342,10 @@ function renderLayer(name, geojson) {
     layerGroup = L.geoJSON(geojson, {
       style: {
         color: "#8bc34a",
-        weight: 2,
+        weight: 1.5,
         fillColor: "#8bc34a",
-        fillOpacity: 0.35,
-        dashArray: "4, 4"
+        fillOpacity: 0.25,
+        dashArray: "3, 3"
       },
       onEachFeature: (feat, layer) => {
         layer.on("click", () => showInspector("Farm Parcel Boundary", feat.properties));
