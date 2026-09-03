@@ -108,21 +108,16 @@ html, body {
   transition: background-color .5s ease, color .5s ease;
 }
 
-/* ---------- Aurora backdrop ---------- */
+/* ---------- Aurora backdrop (Optimized Static Gradients) ---------- */
 body::before {
   content: "";
-  position: fixed; inset: -25%;
+  position: fixed; inset: 0;
   z-index: -2;
   background:
-    radial-gradient(38% 44% at 16% 12%, var(--aurora-1), transparent 70%),
-    radial-gradient(34% 40% at 10% 86%, var(--aurora-2), transparent 70%),
-    radial-gradient(30% 36% at 88% 28%, var(--aurora-3), transparent 70%);
-  filter: blur(46px);
-  animation: auroraDrift 24s ease-in-out infinite alternate;
-}
-@keyframes auroraDrift {
-  0%   { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(3.5%, -4%) scale(1.09); }
+    radial-gradient(50% 60% at 16% 12%, var(--aurora-1), transparent 75%),
+    radial-gradient(45% 55% at 10% 86%, var(--aurora-2), transparent 75%),
+    radial-gradient(40% 50% at 88% 28%, var(--aurora-3), transparent 75%);
+  pointer-events: none;
 }
 
 ::selection { background: var(--glow); }

@@ -78,7 +78,10 @@ window.addEventListener("load", () => {
 });
 
 function initMap() {
-  map = L.map("map", { zoomControl: false }).setView([19.073, 72.873], 16);
+  map = L.map("map", {
+    preferCanvas: true,
+    zoomControl: false
+  }).setView([19.073, 72.873], 16);
   L.control.zoom({ position: "bottomright" }).addTo(map);
   L.control.scale({ imperial: false, position: "bottomright" }).addTo(map);
 
