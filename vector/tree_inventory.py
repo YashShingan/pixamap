@@ -34,11 +34,14 @@ class TreeInventoryExtractor:
         self,
         tree_prob_mask: np.ndarray,
         geo_transform_fn,  # callable: (px, py) -> (lon, lat)
-        ndsm: Optional[np.ndarray] = None
+        ndsm: Optional[np.ndarray] = None,
+        pixel_size_meters: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Detects trees and generates a structured GIS point inventory.
         """
+        px_m = pixel_size_meters if pixel_size_meters is not None else self.pixel_size_meters
+
         if tree_prob_mask.dtype != np.uint8:
             binary_mask = (tree_prob_mask >= 0.45).astype(np.uint8) * 255
         else:
@@ -60,20 +63,21 @@ class TreeInventoryExtractor:
 
         trees = []
         tree_id = 1
+        min_rad = max(1.5, self.min_crown_radius_px if px_m < 0.2 else 1.5)
 
         for i in range(1, num_labels):
             cx, cy = centroids[i]
             c_int, r_int = int(round(cx)), int(round(cy))
             radius_px = float(dist[r_int, c_int])
 
-            if radius_px < self.min_crown_radius_px or radius_px > self.max_crown_radius_px:
+            if radius_px < min_rad or radius_px > self.max_crown_radius_px:
                 continue
 
             # Convert centroid to geographic coordinates
             gx, gy = geo_transform_fn(cx, cy)
 
             # Calculate metric dimensions
-            crown_diameter_m = round(float(radius_px * 2.0 * self.pixel_size_meters), 2)
+            crown_diameter_m = round(float(radius_px * 2.0 * px_m), 2)
             crown_area_sqm = round(float(math.pi * ((crown_diameter_m / 2.0) ** 2)), 2)
 
             # Sample 3D height from nDSM if available

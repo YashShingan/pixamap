@@ -49,17 +49,57 @@ class GISExporter:
         return output_path
 
     @staticmethod
-    def export_shapefile(features: List[Dict[str, Any]], output_shp_path: str) -> str:
+    def export_shapefile(features: List[Dict[str, Any]], output_shp_path: str, crs_name: str = "EPSG:4326") -> str:
         """
-        Exports features to an ESRI Shapefile set (.shp, .shx, .dbf, .prj) using pyshp.
+        Exports features to an ESRI Shapefile set (.shp, .shx, .dbf, .prj) using GeoPandas/PyOgrio.
+        Fully preserves MultiPolygons, multi-part geometries, interior donut-hole rings (courtyards),
+        and strict attribute type preservation.
         """
         if not features:
             return output_shp_path
 
-        geom_type = features[0]["geometry"]["type"]
         base_name = os.path.splitext(output_shp_path)[0]
         os.makedirs(os.path.dirname(os.path.abspath(output_shp_path)), exist_ok=True)
+        final_shp = f"{base_name}.shp"
 
+        if HAS_GEOPANDAS:
+            try:
+                # Sanitize features and convert boolean properties to int for DBF compatibility
+                sanitized_features = []
+                for feat in features:
+                    new_props = {}
+                    for k, v in feat.get("properties", {}).items():
+                        col = k[:10]  # Shapefile 10-char column limit
+                        if isinstance(v, bool):
+                            new_props[col] = int(v)
+                        elif isinstance(v, (int, float, str)):
+                            new_props[col] = v
+                        else:
+                            new_props[col] = str(v)
+                    sanitized_features.append({
+                        "type": "Feature",
+                        "id": feat.get("id"),
+                        "geometry": feat.get("geometry"),
+                        "properties": new_props
+                    })
+
+                fc = {"type": "FeatureCollection", "features": sanitized_features}
+                gdf = gpd.GeoDataFrame.from_features(fc, crs=crs_name)
+                gdf.to_file(final_shp, driver="ESRI Shapefile")
+
+                # Ensure valid .prj exists
+                prj_file = f"{base_name}.prj"
+                if not os.path.exists(prj_file):
+                    with open(prj_file, "w", encoding="utf-8") as f:
+                        f.write(GISExporter.WGS84_PRJ)
+
+                return final_shp
+            except Exception as e:
+                # Fallback to pyshp if pyogrio encounters an issue
+                pass
+
+        # Fallback using pyshp
+        geom_type = features[0]["geometry"]["type"]
         if geom_type in ["Polygon", "MultiPolygon"]:
             shp_type = shapefile.POLYGON
         elif geom_type in ["LineString", "MultiLineString"]:
@@ -68,11 +108,8 @@ class GISExporter:
             shp_type = shapefile.POINT
 
         w = shapefile.Writer(base_name, shapeType=shp_type)
-
-        # Build attribute table fields from first feature
         sample_props = features[0].get("properties", {})
         for key, val in sample_props.items():
-            # Truncate field names to 10 chars for DBF spec
             col_name = key[:10]
             if isinstance(val, int):
                 w.field(col_name, 'N')
@@ -86,8 +123,6 @@ class GISExporter:
         for feat in features:
             geom = feat["geometry"]
             props = feat.get("properties", {})
-
-            # Truncated property values
             record_vals = [props.get(k) for k in sample_props.keys()]
 
             if geom["type"] == "Point":
@@ -96,16 +131,20 @@ class GISExporter:
                 w.line([geom["coordinates"]])
             elif geom["type"] == "Polygon":
                 w.poly(geom["coordinates"])
-            
+            elif geom["type"] == "MultiPolygon":
+                all_rings = []
+                for poly_coords in geom["coordinates"]:
+                    all_rings.extend(poly_coords)
+                w.poly(all_rings)
+
             w.record(*record_vals)
 
         w.close()
 
-        # Write .prj projection file (WGS84)
         with open(f"{base_name}.prj", "w", encoding="utf-8") as prj_file:
             prj_file.write(GISExporter.WGS84_PRJ)
 
-        return f"{base_name}.shp"
+        return final_shp
 
     @staticmethod
     def export_geopackage(features_dict: Dict[str, List[Dict[str, Any]]], output_gpkg_path: str) -> str:
@@ -140,6 +179,15 @@ class GISExporter:
         os.makedirs(temp_dir, exist_ok=True)
 
         try:
+            # Include metadata manifest in export archive
+            meta_path = os.path.join(temp_dir, "metadata.json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "engine": "PixaMap GeoAI Engine",
+                    "total_features": sum(len(v) for v in layers.values()),
+                    "layers": list(layers.keys())
+                }, f, indent=2)
+
             for layer_name, feats in layers.items():
                 if not feats:
                     continue

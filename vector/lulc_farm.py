@@ -55,11 +55,14 @@ class LULCAndFarmExtractor:
     def extract_farm_boundaries(
         self,
         farm_prob_mask: np.ndarray,
-        geo_transform_fn
+        geo_transform_fn,
+        pixel_size_meters: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Delineates agricultural parcel polygons with smooth boundaries and metric area calculations.
         """
+        px_m = pixel_size_meters if pixel_size_meters is not None else self.pixel_size_meters
+
         if farm_prob_mask.dtype != np.uint8:
             binary = (farm_prob_mask >= 0.5).astype(np.uint8) * 255
         else:
@@ -77,6 +80,12 @@ class LULCAndFarmExtractor:
         for cnt in contours:
             area_px = cv2.contourArea(cnt)
             if area_px < self.min_parcel_area_px:
+                continue
+
+            area_sqm_rough = area_px * (px_m ** 2)
+            # Skip small urban green patches / gardens that are not real farms
+            min_farm_sqm = 800.0 if px_m >= 0.3 else 100.0
+            if area_sqm_rough < min_farm_sqm:
                 continue
 
             # Simplify contour
@@ -111,8 +120,8 @@ class LULCAndFarmExtractor:
             except Exception:
                 continue
 
-            area_sqm = round(float(area_px * (self.pixel_size_meters ** 2)), 2)
-            if area_sqm > 50000.0:
+            area_sqm = round(float(area_px * (px_m ** 2)), 2)
+            if area_sqm > 1000000.0:
                 continue
             area_hectares = round(area_sqm / 10000.0, 3)
 
@@ -140,13 +149,16 @@ class LULCAndFarmExtractor:
     def extract_water_bodies(
         self,
         water_prob_mask: np.ndarray,
-        geo_transform_fn
+        geo_transform_fn,
+        pixel_size_meters: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Extracts lakes, ponds, and river polygons.
         """
+        px_m = pixel_size_meters if pixel_size_meters is not None else self.pixel_size_meters
+
         if water_prob_mask.dtype != np.uint8:
-            binary = (water_prob_mask >= 0.5).astype(np.uint8) * 255
+            binary = (water_prob_mask >= 0.40).astype(np.uint8) * 255
         else:
             binary = water_prob_mask
 
@@ -156,10 +168,10 @@ class LULCAndFarmExtractor:
 
         for cnt in contours:
             area_px = cv2.contourArea(cnt)
-            if area_px < 100:
+            if area_px < 120:
                 continue
 
-            epsilon = 0.01 * cv2.arcLength(cnt, True)
+            epsilon = 0.008 * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
             if len(approx) < 3:
                 continue
@@ -187,8 +199,10 @@ class LULCAndFarmExtractor:
             except Exception:
                 continue
 
-            area_sqm = round(float(area_px * (self.pixel_size_meters ** 2)), 2)
-            if area_sqm > 250000.0:
+            area_sqm = round(float(area_px * (px_m ** 2)), 2)
+            # Retain genuine water bodies, channels, and ponds (discard micro-puddles)
+            min_water_area = 150.0 if px_m >= 0.3 else 50.0
+            if area_sqm < min_water_area:
                 continue
 
             feature = {

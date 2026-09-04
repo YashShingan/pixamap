@@ -4,7 +4,7 @@ Extracts routable 1D topological line graphs (LineString) from 2D raster road co
 preserves intersection nodes, prunes short spurs, and calculates road metrics.
 """
 
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple, Set, Optional
 import math
 import numpy as np
 import cv2
@@ -30,14 +30,17 @@ class RoadCenterlineExtractor:
     def extract_centerlines(
         self,
         road_prob_mask: np.ndarray,
-        geo_transform_fn  # callable: (px, py) -> (lon, lat)
+        geo_transform_fn,  # callable: (px, py) -> (lon, lat)
+        pixel_size_meters: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Extracts topological road network centerlines from a probability mask.
         """
-        # Threshold road mask
+        px_m = pixel_size_meters if pixel_size_meters is not None else self.pixel_size_meters
+
+        # Threshold road mask to isolate well-defined transportation corridors
         if road_prob_mask.dtype != np.uint8:
-            binary_mask = (road_prob_mask >= 0.5).astype(np.uint8) * 255
+            binary_mask = (road_prob_mask >= 0.40).astype(np.uint8) * 255
         else:
             binary_mask = road_prob_mask
 
@@ -53,9 +56,9 @@ class RoadCenterlineExtractor:
         if graph.number_of_nodes() == 0:
             return []
 
-        # Step 4: Prune short dead-end spurs (< min_road_length_meters)
-        min_nodes = max(3, int(self.min_road_length_meters / max(self.pixel_size_meters, 0.01)))
-        graph = self._prune_spurs(graph, min_length_nodes=min_nodes)
+        # Step 4: Prune short dead-end spurs (< 25m on satellite) to eliminate incomplete stubs
+        min_spur = max(25.0, self.min_road_length_meters) if px_m >= 0.3 else self.min_road_length_meters
+        graph = self._prune_spurs_metric(graph, min_spur_meters=min_spur, pixel_size_meters=px_m)
 
         # Step 5: Extract Paths / LineStrings between Junctions (degree != 2)
         edges_paths = self._extract_edge_paths(graph)
@@ -63,7 +66,12 @@ class RoadCenterlineExtractor:
         features = []
         feature_id = 1
 
-        for path in edges_paths:
+        for raw_path in edges_paths:
+            if len(raw_path) < 2:
+                continue
+
+            # Apply degree-2 collinear edge collapse (< 15 degrees deviation)
+            path = self._collapse_collinear_edges(raw_path, max_angle_deviation_deg=15.0)
             if len(path) < 2:
                 continue
 
@@ -75,16 +83,22 @@ class RoadCenterlineExtractor:
             for r, c in path:
                 gx, gy = geo_transform_fn(float(c), float(r))
                 geo_coords.append((gx, gy))
-                widths.append(float(dist_transform[r, c]) * 2.0 * self.pixel_size_meters)
+                widths.append(float(dist_transform[r, c]) * 2.0 * px_m)
                 probs.append(float(road_prob_mask[r, c]))
 
             line = LineString(geo_coords)
-            length_px = float(len(path))
-            length_m = round(length_px * self.pixel_size_meters, 2)
+            # Smooth out micro-pixel zig-zags
+            line = line.simplify(0.000015, preserve_topology=True)
+            if line.is_empty or len(line.coords) < 2:
+                continue
+
+            length_m = round(float(self._calculate_path_metric_length(path, px_m)), 2)
             avg_width_m = round(float(np.mean(widths)), 2)
             mean_conf = round(float(np.mean(probs)), 3)
 
-            if length_m < self.min_road_length_meters:
+            # Minimum continuity threshold
+            min_len = max(25.0, self.min_road_length_meters) if px_m >= 0.3 else self.min_road_length_meters
+            if length_m < min_len:
                 continue
 
             feature = {
@@ -107,6 +121,98 @@ class RoadCenterlineExtractor:
             feature_id += 1
 
         return features
+
+    def _calculate_path_metric_length(self, path: List[Tuple[int, int]], pixel_size_meters: Optional[float] = None) -> float:
+        """Calculates metric length in meters along a polyline of pixel coordinates."""
+        px_m = pixel_size_meters if pixel_size_meters is not None else self.pixel_size_meters
+        if len(path) < 2:
+            return 0.0
+        total_m = 0.0
+        for i in range(1, len(path)):
+            r0, c0 = path[i - 1]
+            r1, c1 = path[i]
+            dist_px = math.hypot(c1 - c0, r1 - r0)
+            total_m += dist_px * px_m
+        return total_m
+
+    def _prune_spurs_metric(
+        self,
+        graph: nx.Graph,
+        min_spur_meters: float = 8.0,
+        pixel_size_meters: Optional[float] = None
+    ) -> nx.Graph:
+        """
+        Recursively prunes dead-end degree-1 spurs shorter than min_spur_meters.
+        Eliminates noise artifacts from parked vehicles, vegetation, and shadows.
+        """
+        px_m = pixel_size_meters if pixel_size_meters is not None else self.pixel_size_meters
+        pruned = graph.copy()
+        while True:
+            endpoints = [n for n, deg in pruned.degree() if deg == 1]
+            removed = False
+            for ep in endpoints:
+                path = [ep]
+                curr = ep
+                while True:
+                    neighbors = [nbr for nbr in pruned.neighbors(curr) if nbr not in path]
+                    if not neighbors or pruned.degree(curr) > 2:
+                        break
+                    curr = neighbors[0]
+                    path.append(curr)
+                    if pruned.degree(curr) != 2:
+                        break
+
+                metric_len = self._calculate_path_metric_length(path, px_m)
+                if metric_len < min_spur_meters:
+                    pruned.remove_nodes_from(path[:-1])
+                    removed = True
+            if not removed:
+                break
+        return pruned
+
+    def _collapse_collinear_edges(
+        self,
+        path: List[Tuple[int, int]],
+        max_angle_deviation_deg: float = 15.0
+    ) -> List[Tuple[int, int]]:
+        """
+        Simplifies degree-2 intermediate nodes where incident vectors deviate by < 15°.
+        Merges redundant vertices into a smooth, production-ready continuous polyline.
+        """
+        if len(path) <= 2:
+            return path
+
+        threshold_cos = math.cos(math.radians(max_angle_deviation_deg))
+        simplified = [path[0]]
+
+        for i in range(1, len(path) - 1):
+            p_prev = simplified[-1]
+            p_curr = path[i]
+            p_next = path[i + 1]
+
+            # Vector 1: p_prev -> p_curr
+            v1_x = p_curr[1] - p_prev[1]
+            v1_y = p_curr[0] - p_prev[0]
+            len1 = math.hypot(v1_x, v1_y)
+
+            # Vector 2: p_curr -> p_next
+            v2_x = p_next[1] - p_curr[1]
+            v2_y = p_next[0] - p_curr[0]
+            len2 = math.hypot(v2_x, v2_y)
+
+            if len1 < 1e-4 or len2 < 1e-4:
+                continue
+
+            # Dot product to check angle
+            cos_theta = ((v1_x * v2_x) + (v1_y * v2_y)) / (len1 * len2)
+            cos_theta = max(-1.0, min(1.0, cos_theta))
+
+            # If direction changes significantly (> 15 deg), preserve node as an elbow/curve
+            if cos_theta < threshold_cos:
+                simplified.append(p_curr)
+
+        simplified.append(path[-1])
+        return simplified
 
     def _morphological_thinning(self, binary_img: np.ndarray) -> np.ndarray:
         """
@@ -135,92 +241,63 @@ class RoadCenterlineExtractor:
     def _thinning_iteration(self, im: np.ndarray, iter_num: int) -> np.ndarray:
         marker = np.zeros_like(im)
         h, w = im.shape
-        # Pad image to prevent out of bounds
         padded = np.pad(im, 1, mode='constant', constant_values=0)
 
-        # 8-neighbors
-        p2 = padded[0:h, 1:w+1]
-        p3 = padded[0:h, 2:w+2]
-        p4 = padded[1:h+1, 2:w+2]
-        p5 = padded[2:h+2, 2:w+2]
-        p6 = padded[2:h+2, 1:w+1]
-        p7 = padded[2:h+2, 0:w]
-        p8 = padded[1:h+1, 0:w]
-        p9 = padded[0:h, 0:w]
-        p1 = padded[1:h+1, 1:w+1]
+        P2 = padded[0:h, 1:w+1]
+        P3 = padded[0:h, 2:w+2]
+        P4 = padded[1:h+1, 2:w+2]
+        P5 = padded[2:h+2, 2:w+2]
+        P6 = padded[2:h+2, 1:w+1]
+        P7 = padded[2:h+2, 0:w]
+        P8 = padded[1:h+1, 0:w]
+        P9 = padded[0:h, 0:w]
 
         # Condition 1: 2 <= B(P1) <= 6
-        bp1 = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9
-        c1 = (bp1 >= 2) & (bp1 <= 6)
+        B = P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9
+        c1 = (B >= 2) & (B <= 6)
 
-        # Condition 2: A(P1) == 1 (0->1 transitions in clockwise order)
-        transitions = (
-            ((p2 == 0) & (p3 == 1)).astype(int) +
-            ((p3 == 0) & (p4 == 1)).astype(int) +
-            ((p4 == 0) & (p5 == 1)).astype(int) +
-            ((p5 == 0) & (p6 == 1)).astype(int) +
-            ((p6 == 0) & (p7 == 1)).astype(int) +
-            ((p7 == 0) & (p8 == 1)).astype(int) +
-            ((p8 == 0) & (p9 == 1)).astype(int) +
-            ((p9 == 0) & (p2 == 1)).astype(int)
+        # Condition 2: A(P1) == 1
+        A = (
+            ((P2 == 0) & (P3 == 1)).astype(int) +
+            ((P3 == 0) & (P4 == 1)).astype(int) +
+            ((P4 == 0) & (P5 == 1)).astype(int) +
+            ((P5 == 0) & (P6 == 1)).astype(int) +
+            ((P6 == 0) & (P7 == 1)).astype(int) +
+            ((P7 == 0) & (P8 == 1)).astype(int) +
+            ((P8 == 0) & (P9 == 1)).astype(int) +
+            ((P9 == 0) & (P2 == 1)).astype(int)
         )
-        c2 = (transitions == 1)
+        c2 = (A == 1)
 
         if iter_num == 0:
-            c3 = (p2 * p4 * p6 == 0)
-            c4 = (p4 * p6 * p8 == 0)
+            c3 = (P2 * P4 * P6 == 0)
+            c4 = (P4 * P6 * P8 == 0)
         else:
-            c3 = (p2 * p4 * p8 == 0)
-            c4 = (p2 * p6 * p8 == 0)
+            c3 = (P2 * P4 * P8 == 0)
+            c4 = (P2 * P6 * P8 == 0)
 
-        to_remove = (p1 == 1) & c1 & c2 & c3 & c4
-        marker[to_remove] = 1
-        return marker
+        marker = (im == 1) & c1 & c2 & c3 & c4
+        return marker.astype(np.uint8)
 
     def _build_graph_from_skeleton(self, skeleton: np.ndarray) -> nx.Graph:
-        """Constructs an undirected graph where white pixels are nodes and 8-neighbors are edges."""
+        """Constructs an 8-connected spatial Graph from skeleton pixels."""
         graph = nx.Graph()
-        coords = np.argwhere(skeleton > 0)
-        coord_set = set((r, c) for r, c in coords)
+        points = np.argwhere(skeleton == 255)
 
-        for r, c in coords:
-            graph.add_node((r, c))
-            # Check 8 neighbors
-            for dr in [-1, 0, 1]:
-                for dc in [-1, 0, 1]:
-                    if dr == 0 and dc == 0:
-                        continue
-                    nr, nc = r + dr, c + dc
-                    if (nr, nc) in coord_set:
-                        graph.add_edge((r, c), (nr, nc))
+        for r, c in points:
+            graph.add_node((int(r), int(c)))
+
+        point_set = set((int(r), int(c)) for r, c in points)
+        offsets = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)]
+
+        for r, c in points:
+            node = (int(r), int(c))
+            for dr, dc in offsets:
+                nbr = (r + dr, c + dc)
+                if nbr in point_set:
+                    graph.add_edge(node, nbr)
 
         return graph
-
-    def _prune_spurs(self, graph: nx.Graph, min_length_nodes: int) -> nx.Graph:
-        """Prunes dead-end spurs shorter than min_length_nodes."""
-        pruned = graph.copy()
-        while True:
-            endpoints = [n for n, deg in pruned.degree() if deg == 1]
-            removed = False
-            for ep in endpoints:
-                # Trace path until junction or other endpoint
-                path = [ep]
-                curr = ep
-                while True:
-                    neighbors = [nbr for nbr in pruned.neighbors(curr) if nbr not in path]
-                    if not neighbors or pruned.degree(curr) > 2:
-                        break
-                    curr = neighbors[0]
-                    path.append(curr)
-                    if pruned.degree(curr) != 2:
-                        break
-                
-                if len(path) < min_length_nodes:
-                    pruned.remove_nodes_from(path[:-1])
-                    removed = True
-            if not removed:
-                break
-        return pruned
 
     def _extract_edge_paths(self, graph: nx.Graph) -> List[List[Tuple[int, int]]]:
         """Compresses chains of degree-2 nodes into individual LineString paths."""
@@ -229,7 +306,6 @@ class RoadCenterlineExtractor:
 
         junctions = [n for n, deg in graph.degree() if deg != 2]
         if not junctions and graph.number_of_nodes() > 0:
-            # It's an isolated closed loop or single segment
             nodes = list(graph.nodes())
             return [nodes]
 

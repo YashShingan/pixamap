@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -60,6 +60,14 @@
           <i class="fa-solid fa-wand-magic-sparkles"></i> Run Synthetic Demo Scene
         </button>
         <div class="hint-line">Full pipeline test — no selection needed</div>
+      </div>
+
+      <!-- External Orthophoto Upload -->
+      <div class="card action-card">
+        <button id="btnOpenUploadModal" class="btn btn-secondary">
+          <i class="fa-solid fa-cloud-arrow-up"></i> Insert External Orthophoto
+        </button>
+        <div class="hint-line">Upload GeoTIFF, TIFF, or drone photo (RGB / DSM)</div>
       </div>
 
       <!-- Metrics -->
@@ -168,6 +176,24 @@
     <main class="map-wrapper" id="mapWrapper">
       <div id="map"></div>
 
+      <!-- Top Controls: 2D Ortho Inspection vs 3D Extruded CAD -->
+      <div class="map-view-controls">
+        <div class="btn-group-toggle">
+          <button type="button" id="btnMode2D" class="mode-btn active" title="2D Ortho Inspection Mode">
+            <i class="fa-solid fa-map"></i> 2D Ortho
+          </button>
+          <button type="button" id="btnMode3D" class="mode-btn" title="3D Extruded CAD Mode">
+            <i class="fa-solid fa-cube"></i> 3D Extruded CAD
+          </button>
+        </div>
+        <div id="orthoOpacityControl" class="ortho-opacity-bar hidden">
+          <i class="fa-solid fa-layer-group"></i>
+          <span class="opacity-label">Ortho Opacity</span>
+          <input type="range" id="rngOrthoOpacity" min="0" max="100" value="90">
+          <span id="lblOrthoOpacity" class="mono">90%</span>
+        </div>
+      </div>
+
       <!-- Legend -->
       <div id="mapLegend" class="map-legend">
         <div class="legend-header">
@@ -223,6 +249,81 @@
     </div>
   </div>
 
+  <!-- ============ UPLOAD ORTHOPHOTO MODAL ============ -->
+  <div id="uploadModal" class="modal-backdrop hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-cloud-arrow-up"></i> Insert External Orthophoto</h3>
+        <button type="button" id="btnCloseUploadModal" class="btn-icon" title="Close">&times;</button>
+      </div>
+      <form id="uploadOrthoForm" class="modal-body">
+        <!-- Orthophoto Dropzone -->
+        <div class="form-group">
+          <label class="form-label">
+            <i class="fa-solid fa-image"></i> Orthophoto Raster (RGB) <span class="req">*</span>
+          </label>
+          <div class="upload-dropzone" id="orthoDropzone">
+            <i class="fa-solid fa-file-arrow-up drop-icon"></i>
+            <div class="drop-text">
+              <span class="drop-title">Drag & drop orthophoto here</span>
+              <span class="drop-sub">Supports GeoTIFF (.tif, .tiff), PNG, JPEG</span>
+            </div>
+            <input type="file" id="orthoFileInput" accept=".tif,.tiff,.png,.jpg,.jpeg" required style="display:none">
+            <button type="button" class="btn-upload-browse" id="btnBrowseOrtho">Browse File</button>
+          </div>
+          <div id="orthoSelectedFile" class="selected-file-info hidden"></div>
+        </div>
+
+        <!-- Optional Elevation DSM Dropzone -->
+        <div class="form-group">
+          <label class="form-label">
+            <i class="fa-solid fa-mountain"></i> 3D Elevation Model (DSM) — Optional
+          </label>
+          <div class="upload-dropzone dropzone-sm" id="dsmDropzone">
+            <i class="fa-solid fa-mountain-sun drop-icon"></i>
+            <div class="drop-text">
+              <span class="drop-title">Optional DSM raster for 3D tree height & nDSM</span>
+              <span class="drop-sub">.tif, .tiff</span>
+            </div>
+            <input type="file" id="dsmFileInput" accept=".tif,.tiff" style="display:none">
+            <button type="button" class="btn-upload-browse" id="btnBrowseDSM">Browse DSM</button>
+          </div>
+          <div id="dsmSelectedFile" class="selected-file-info hidden"></div>
+        </div>
+
+        <!-- Georeferencing / Coordinate Bounds (Optional) -->
+        <div class="form-group">
+          <div class="form-label-row">
+            <label class="form-label"><i class="fa-solid fa-globe"></i> Coordinate Bounds (WGS84 EPSG:4326)</label>
+            <button type="button" id="btnAutoFillBounds" class="link-btn-sm">
+              <i class="fa-solid fa-crosshairs"></i> Fill Current Map View
+            </button>
+          </div>
+          <div class="coords-grid">
+            <input type="number" step="any" id="inputMinLon" placeholder="Min Lon (e.g. 72.870)">
+            <input type="number" step="any" id="inputMinLat" placeholder="Min Lat (e.g. 19.070)">
+            <input type="number" step="any" id="inputMaxLon" placeholder="Max Lon (e.g. 72.876)">
+            <input type="number" step="any" id="inputMaxLat" placeholder="Max Lat (e.g. 19.076)">
+          </div>
+          <span class="hint-text">Leave blank if your GeoTIFF already has embedded georeferencing tags.</span>
+        </div>
+
+        <!-- GSD Resolution (Optional) -->
+        <div class="form-group">
+          <label class="form-label"><i class="fa-solid fa-ruler-combined"></i> Ground Sampling Distance (GSD)</label>
+          <input type="number" step="any" id="inputGSD" class="form-input" placeholder="Auto-detect (or enter meters/pixel, e.g. 0.05)">
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="btnCancelUpload" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="btnSubmitUpload" class="btn btn-primary">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Digitize & Map with GeoAI
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- ============ TOASTS ============ -->
   <div id="toastContainer" class="toast-container"></div>
 
@@ -236,7 +337,7 @@
     <p class="splash-sub">Initializing GeoAI Engine<span class="dots"><span>.</span><span>.</span><span>.</span></span></p>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

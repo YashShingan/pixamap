@@ -165,6 +165,77 @@ class TestPixaMapPipeline(unittest.TestCase):
         self.assertIn("tree_count", summary)
         self.assertGreater(summary["building_count"], 0)
 
+    def test_reprojection_edge_cases(self):
+        """Verify UTM CRS detection and isometric GSD at equator and high latitudes."""
+        # Equator test (lat 0, lon 10) -> EPSG:32632
+        data_eq = np.zeros((3, 100, 100), dtype=np.uint8)
+        bounds_eq = (10.0, 0.0, 10.005, 0.005)
+        r_eq = GeoRaster(data_eq, bounds_eq, crs="EPSG:4326")
+        self.assertEqual(r_eq.utm_crs, "EPSG:32632")
+        self.assertGreater(r_eq.pixel_size_meters, 0.0)
+
+        # High latitude test (lat 60N, lon 10E) -> EPSG:32632
+        bounds_high = (10.0, 60.0, 10.005, 60.005)
+        r_high = GeoRaster(data_eq, bounds_high, crs="EPSG:4326")
+        self.assertEqual(r_high.utm_crs, "EPSG:32632")
+        self.assertGreater(r_high.pixel_size_meters, 0.0)
+        # Verify lon distance shrinks at 60 deg latitude compared to equator
+        self.assertLess(r_high.pixel_size_meters, r_eq.pixel_size_meters)
+
+    def test_orthogonalization_l_shaped_building(self):
+        """Verify dominant-angle CAD orthogonalization on L-shaped building with 3D heights."""
+        mask = np.zeros((120, 120), dtype=np.uint8)
+        # Create an L-shaped building
+        mask[20:80, 20:50] = 255
+        mask[50:80, 50:90] = 255
+
+        ndsm = np.zeros((120, 120), dtype=np.float32)
+        ndsm[mask == 255] = 8.5  # 8.5m roof
+
+        reg = BuildingRegularizer(pixel_size_meters=0.1)
+        features = reg.regularize_mask(mask, self.dummy_geo_fn, ndsm=ndsm)
+
+        self.assertGreater(len(features), 0)
+        bldg = features[0]
+        self.assertEqual(bldg["geometry"]["type"], "Polygon")
+        self.assertIn("height_max", bldg["properties"])
+        self.assertAlmostEqual(bldg["properties"]["height_max"], 8.5, delta=0.5)
+        self.assertIn("roof_profile", bldg["properties"])
+        self.assertEqual(bldg["properties"]["roof_profile"], "flat")
+
+    def test_donut_hole_shapefile_export(self):
+        """Verify exporting polygons with interior courtyard rings to Shapefile."""
+        import geopandas as gpd
+
+        donut_feature = [{
+            "type": "Feature",
+            "id": 1,
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    # Exterior ring (100x100m)
+                    [[72.871, 19.071], [72.873, 19.071], [72.873, 19.073], [72.871, 19.073], [72.871, 19.071]],
+                    # Interior courtyard ring
+                    [[72.8715, 19.0715], [72.8725, 19.0715], [72.8725, 19.0725], [72.8715, 19.0725], [72.8715, 19.0715]]
+                ]
+            },
+            "properties": {
+                "bldg_id": 99,
+                "has_court": True,
+                "height_max": 14.2
+            }
+        }]
+
+        temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "temp"))
+        shp_path = os.path.join(temp_dir, "donut_test.shp")
+        GISExporter.export_shapefile(donut_feature, shp_path)
+
+        # Read back using GeoPandas
+        gdf = gpd.read_file(shp_path)
+        geom = gdf.geometry.iloc[0]
+        self.assertEqual(geom.geom_type, "Polygon")
+        self.assertEqual(len(geom.interiors), 1)  # Interior courtyard preserved!
+
 
 if __name__ == "__main__":
     unittest.main()
