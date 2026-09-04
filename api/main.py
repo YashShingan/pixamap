@@ -189,52 +189,48 @@ def extract_aoi(req: AOIRequest):
                     else:
                         props["length_m"] = 35.0
 
-            # Deduplicate: Buffer authoritative OSM roads by 15m to eliminate redundant criss-cross lines
+            # Authoritative OSM roads form the clean highway & street backbone
             valid_osm_geoms = [shape(r["geometry"]) for r in osm_roads if shape(r["geometry"]).is_valid]
             if valid_osm_geoms:
                 try:
-                    osm_corridors = unary_union([l.buffer(0.00014) for l in valid_osm_geoms])
+                    osm_corridors = unary_union([l.buffer(0.00018) for l in valid_osm_geoms])
                     clean_ai_roads = []
                     for ar in ai_roads:
                         ls = shape(ar["geometry"])
-                        if not ls.is_valid or ar.get("properties", {}).get("length_m", 0) < 25.0:
+                        # Only accept continuous corridors >= 45m
+                        if not ls.is_valid or ar.get("properties", {}).get("length_m", 0) < 45.0:
                             continue
-                        # Reject AI road if it duplicates or runs parallel inside an existing OSM corridor
-                        overlap = ls.intersection(osm_corridors).length / max(ls.length, 1e-9)
-                        if overlap < 0.35:
-                            clean_ai_roads.append(ar)
+                        # Reject any AI road that crosses, intersects, or duplicates an authoritative OSM corridor
+                        if ls.intersects(osm_corridors):
+                            overlap = ls.intersection(osm_corridors).length / max(ls.length, 1e-9)
+                            # If overlap > 12%, it is cross-lane noise or redundant parallel corridor
+                            if overlap > 0.12:
+                                continue
+                        clean_ai_roads.append(ar)
                     results["layers"]["roads"] = list(osm_roads) + clean_ai_roads
                 except Exception:
                     results["layers"]["roads"] = list(osm_roads)
             else:
-                results["layers"]["roads"] = list(osm_roads)
+                results["layers"]["roads"] = [
+                    r for r in ai_roads 
+                    if shape(r["geometry"]).is_valid and r.get("properties", {}).get("length_m", 0) >= 45.0
+                ]
         else:
-            # Filter AI roads to discard incomplete stubs < 25m
+            # Filter AI roads to discard incomplete stubs < 45m
             from shapely.geometry import shape
             results["layers"]["roads"] = [
                 r for r in ai_roads 
-                if shape(r["geometry"]).is_valid and r.get("properties", {}).get("length_m", 0) >= 25.0
+                if shape(r["geometry"]).is_valid and r.get("properties", {}).get("length_m", 0) >= 45.0
             ]
 
+        # Natural Water Bodies: Use satellite spectral boundaries as ground truth.
+        # Only import verified OSM water if it is already a genuine Polygon (lakes, reservoirs, ponds).
+        # NEVER artificially buffer a LineString into a rigid 33m tube!
         if osm_data.get("water"):
             for w in osm_data["water"]:
                 geom = w.get("geometry", {})
-                props = w.setdefault("properties", {})
-                if geom.get("type") == "LineString":
-                    coords = geom.get("coordinates", [])
-                    if len(coords) >= 2:
-                        try:
-                            from shapely.geometry import LineString
-                            ls = LineString(coords)
-                            poly = ls.buffer(0.00015)
-                            w["geometry"] = {
-                                "type": "Polygon",
-                                "coordinates": [list(poly.exterior.coords)]
-                            }
-                            props["area_sqm"] = round(poly.area * (111320.0 ** 2), 1)
-                        except Exception:
-                            pass
-            results["layers"]["water"].extend(osm_data["water"])
+                if geom.get("type") == "Polygon":
+                    results["layers"]["water"].append(w)
 
         osm_buildings = osm_data.get("buildings", [])
         ai_buildings = results["layers"]["buildings"]
@@ -430,6 +426,35 @@ def extract_aoi(req: AOIRequest):
             results["layers"]["water"] = clean_water
 
         results["summary"]["water_body_count"] = len(results["layers"]["water"])
+
+        # Clean Trees: Strictly forbid trees from spawning inside water bodies, buildings, or highway centerlines
+        raw_trees = results["layers"]["trees"]
+        if raw_trees:
+            from shapely.geometry import Point, shape
+            from shapely.ops import unary_union
+            valid_water_geoms = [shape(w["geometry"]) for w in results["layers"]["water"] if shape(w["geometry"]).is_valid]
+            water_union_t = unary_union(valid_water_geoms) if valid_water_geoms else None
+            bldg_union_t = unary_union(valid_bldg_geoms) if valid_bldg_geoms else None
+            road_union_t = unary_union([shape(r["geometry"]).buffer(0.00005) for r in results["layers"]["roads"] if shape(r["geometry"]).is_valid]) if results["layers"]["roads"] else None
+
+            clean_trees = []
+            for t in raw_trees:
+                coords = t.get("geometry", {}).get("coordinates", [])
+                if len(coords) < 2:
+                    continue
+                pt = Point(coords[0], coords[1])
+                # Exclude trees in water
+                if water_union_t and water_union_t.contains(pt):
+                    continue
+                # Exclude trees on roofs
+                if bldg_union_t and bldg_union_t.contains(pt):
+                    continue
+                # Exclude trees on highway surface
+                if road_union_t and road_union_t.contains(pt):
+                    continue
+                clean_trees.append(t)
+            results["layers"]["trees"] = clean_trees
+            results["summary"]["tree_count"] = len(clean_trees)
 
         TASKS_DB[task_id] = {
             "status": "completed",

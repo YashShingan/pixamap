@@ -16,5 +16,16 @@ always_on: true
    - Distinguish water from vegetation by texture smoothness and low vegetation index, never relying solely on $B > G$.
    - Forests and tree canopies must never be classified as water.
 
-3. **Road Network Continuity:**
+3. **Road Network Continuity & Corridor Filtering:**
    - Road centerlines must preserve topological graph connectivity and intersection degree $\ge 3$.
+   - Road detection strictly requires multi-directional linear corridor continuity ($0^\circ, 90^\circ, 45^\circ, 135^\circ$ kernels $\ge 11\,\text{px}$) to reject parking lots, courtyards, and cross-lane perpendicular zebra cuts.
+   - Discard isolated stubs shorter than $45\,\text{m}$. Authoritative OSM roads form the primary clean backbone.
+
+4. **Topological Mutual Exclusion Cascade:**
+   - $\text{Trees} \cap \text{Water} = \emptyset$: Tree crowns are mathematically barred from spawning inside rivers, creeks, or water bodies.
+   - $\text{Trees} \cap \text{Buildings} = \emptyset$ and $\text{Trees} \cap \text{Roads} = \emptyset$: No trees on rooftops or active highway surfaces.
+   - Natural satellite spectral boundaries define rivers/creeks; do not artificially buffer LineString centerlines into rigid 33m tubes.
+
+5. **Concrete Urban Apartment Flat Roof Detection:**
+   - White, cream, and grey flat roofs with high local contrast must be captured as buildings and protected from asphalt road filtering using aspect ratio invariants ($< 3.5:1$ is always a building).
+   - Tree crown visual diameters must be calibrated to realistic scales ($2.0\text{–}4.0\,\text{m}$).

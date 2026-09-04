@@ -338,6 +338,16 @@ class BuildingRegularizer:
         sub_peaks = (sub_dist >= peak_thresh).astype(np.uint8)
         num_peaks, peak_labels, stats, centroids = cv2.connectedComponentsWithStats(sub_peaks)
 
+        # Extract cluster's dominant orientation angle
+        cluster_rect = cv2.minAreaRect(cnt)
+        cl_angle = cluster_rect[2]
+        if cluster_rect[1][0] < cluster_rect[1][1]:
+            cl_angle += 90.0
+        while cl_angle > 45.0:
+            cl_angle -= 90.0
+        while cl_angle < -45.0:
+            cl_angle += 90.0
+
         fid = start_id
         for i in range(1, num_peaks):
             cx, cy = centroids[i]
@@ -349,7 +359,7 @@ class BuildingRegularizer:
             w_px = max(4, int(r_clamped * 2.0))
             h_px = max(4, int(r_clamped * 2.0))
 
-            rect = ((cx, cy), (w_px, h_px), 0.0)
+            rect = ((cx, cy), (w_px, h_px), cl_angle)
             box_pts = cv2.boxPoints(rect)
             geo_coords = [geo_transform_fn(float(pt[0]), float(pt[1])) for pt in box_pts]
             geo_coords.append(geo_coords[0])

@@ -786,7 +786,8 @@ function convertTreesToPolygons(treesGeoJSON) {
     features: treesGeoJSON.features.map((f, idx) => {
       const coords = f.geometry.coordinates;
       const lon = coords[0], lat = coords[1];
-      const r = Math.max(0.000015, ((f.properties.crown_diameter_m || 3.0) / 2.0) * 0.000009);
+      const crownM = Math.min(4.0, Math.max(1.8, f.properties.crown_diameter_m || 2.5));
+      const r = (crownM / 2.0) / 111320.0;
       const polyCoords = [];
       const steps = 10;
       for (let s = 0; s < steps; s++) {
@@ -803,7 +804,7 @@ function convertTreesToPolygons(treesGeoJSON) {
         geometry: { type: 'Polygon', coordinates: [polyCoords] },
         properties: {
           ...f.properties,
-          tree_height: f.properties.height_m || 8.0
+          tree_height: Math.min(7.5, Math.max(3.0, f.properties.height_m || 5.0))
         }
       };
     })

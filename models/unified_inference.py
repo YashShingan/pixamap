@@ -144,22 +144,7 @@ class UnifiedGeoAIEngine:
             pixel_size_meters=px_meters
         )
 
-        # 3. Trees (Count, canopy diameter, and 3D height from nDSM)
-        trees = self.tree_extractor.extract_tree_inventory(
-            prob_maps["trees"],
-            geo_transform,
-            ndsm=ndsm,
-            pixel_size_meters=px_meters
-        )
-
-        # 4. Farm Boundaries (Cadastral agricultural parcels)
-        farms = self.lulc_farm_extractor.extract_farm_boundaries(
-            prob_maps["farms"],
-            geo_transform,
-            pixel_size_meters=px_meters
-        )
-
-        # 5. Water Bodies (Rivers, creeks, lakes, and ponds)
+        # 3. Water Bodies (Rivers, creeks, lakes, and ponds)
         # Strictly mask out building footprints and road corridors from water probability mask
         water_prob_clean = prob_maps["water"].copy()
         if buildings and hasattr(ortho_raster, "geo_to_pixel"):
@@ -181,7 +166,7 @@ class UnifiedGeoAIEngine:
                 if len(r_coords) >= 2:
                     try:
                         px_pts = [ortho_raster.geo_to_pixel(pt[0], pt[1]) for pt in r_coords]
-                        cv2.polylines(road_mask_w, [np.array(px_pts, dtype=np.int32)], False, 255, thickness=4)
+                        cv2.polylines(road_mask_w, [np.array(px_pts, dtype=np.int32)], False, 255, thickness=6)
                     except Exception:
                         pass
             water_prob_clean[road_mask_w == 255] = 0.0
@@ -215,6 +200,65 @@ class UnifiedGeoAIEngine:
                 if road_union_w and (ws.intersection(road_union_w).area / max(ws.area, 1e-9)) > 0.12:
                     continue
                 water.append(w)
+
+        # 4. Trees (Count, canopy diameter, and 3D height from nDSM)
+        # CRITICAL INVARIANT: Zero trees inside water bodies, buildings, or highway corridors!
+        tree_prob_clean = prob_maps["trees"].copy()
+        if hasattr(ortho_raster, "geo_to_pixel"):
+            # Mask out building footprints from tree probability
+            if buildings:
+                bldg_mask_t = np.zeros(tree_prob_clean.shape, dtype=np.uint8)
+                for b in buildings:
+                    coords = b.get("geometry", {}).get("coordinates", [[]])[0]
+                    if coords and len(coords) >= 3:
+                        try:
+                            px_pts = [ortho_raster.geo_to_pixel(pt[0], pt[1]) for pt in coords]
+                            cv2.fillPoly(bldg_mask_t, [np.array(px_pts, dtype=np.int32)], 255)
+                        except Exception:
+                            pass
+                tree_prob_clean[bldg_mask_t == 255] = 0.0
+
+            # Mask out water bodies from tree probability (with 3px buffer to keep riverbanks clean)
+            if water:
+                water_mask_t = np.zeros(tree_prob_clean.shape, dtype=np.uint8)
+                for w in water:
+                    coords = w.get("geometry", {}).get("coordinates", [[]])[0]
+                    if coords and len(coords) >= 3:
+                        try:
+                            px_pts = [ortho_raster.geo_to_pixel(pt[0], pt[1]) for pt in coords]
+                            cv2.fillPoly(water_mask_t, [np.array(px_pts, dtype=np.int32)], 255)
+                        except Exception:
+                            pass
+                kernel_w = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                water_mask_t = cv2.dilate(water_mask_t, kernel_w)
+                tree_prob_clean[water_mask_t == 255] = 0.0
+
+            # Mask out roads from tree probability
+            if roads:
+                road_mask_t = np.zeros(tree_prob_clean.shape, dtype=np.uint8)
+                for r in roads:
+                    r_coords = r.get("geometry", {}).get("coordinates", [])
+                    if len(r_coords) >= 2:
+                        try:
+                            px_pts = [ortho_raster.geo_to_pixel(pt[0], pt[1]) for pt in r_coords]
+                            cv2.polylines(road_mask_t, [np.array(px_pts, dtype=np.int32)], False, 255, thickness=6)
+                        except Exception:
+                            pass
+                tree_prob_clean[road_mask_t == 255] = 0.0
+
+        trees = self.tree_extractor.extract_tree_inventory(
+            tree_prob_clean,
+            geo_transform,
+            ndsm=ndsm,
+            pixel_size_meters=px_meters
+        )
+
+        # 5. Farm Boundaries (Cadastral agricultural parcels)
+        farms = self.lulc_farm_extractor.extract_farm_boundaries(
+            prob_maps["farms"],
+            geo_transform,
+            pixel_size_meters=px_meters
+        )
 
         # Summary Metrics
         total_road_km = round(sum(f["properties"]["length_m"] for f in roads) / 1000.0, 3)
@@ -331,9 +375,10 @@ class UnifiedGeoAIEngine:
         # ── Feature 3: Roads ──
         is_asphalt = (color_dev < 26) & (brightness > 35) & (brightness < 195) & non_veg_mask
         
-        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 2))
-        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 9))
-        d1_kernel = np.eye(7, dtype=np.uint8)
+        # Strict continuous corridor morphology: requires >= 11-13 pixel linear corridor
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 3))
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 13))
+        d1_kernel = np.eye(11, dtype=np.uint8)
         d2_kernel = np.fliplr(d1_kernel)
 
         h_roads = cv2.morphologyEx(is_asphalt.astype(np.uint8), cv2.MORPH_OPEN, h_kernel)
@@ -351,43 +396,45 @@ class UnifiedGeoAIEngine:
         # Suppress roads on open grounds (paths across sports fields are NOT road network)
         road_prob = np.where(is_open_ground, road_prob * 0.15, road_prob)
 
-        non_road_mask = (road_prob < 0.30)
-
         # ── Feature 4: Buildings ──
         local_avg = cv2.blur(brightness, (15, 15))
         local_contrast = np.abs(brightness - local_avg)
         
         # 1. Bright Tin/Metal Roofs
-        is_tin_roof = (brightness > 130) & (local_contrast > 6.0) & non_veg_mask & non_road_mask
+        is_tin_roof = (brightness > 130) & (local_contrast > 5.0) & non_veg_mask
         
         # 2. Clay/Terracotta Roofs — MUST have structural edges to distinguish from bare ground
         is_clay_roof = (
             (r > (g + 8)) & (r > (b + 10)) &
             (brightness > 55) & (brightness < 185) &
-            (tree_prob < 0.25) & non_road_mask &
-            (morph_grad > 10) &
-            (local_contrast > 5.0) &
+            (tree_prob < 0.25) &
+            (morph_grad > 8) &
+            (local_contrast > 4.0) &
             (~is_bare_ground)
         )
 
-        # 3. Concrete & Composite Flat Roofs
+        # 3. Concrete & Composite Flat Roofs (Urban apartment blocks, white/cream/grey roofs)
         is_concrete_roof = (
-            (brightness > 75) & (brightness < 240) &
-            (color_dev < 28) &
-            (local_contrast > 3.5) &
-            non_veg_mask & non_road_mask
+            (brightness > 65) & (brightness < 245) &
+            (color_dev < 30) &
+            (local_contrast > 2.8) &
+            (morph_grad > 6.0) &
+            non_veg_mask
         )
 
         # 4. Structural Roof Edges
-        roof_edges = (morph_grad > 14) & non_veg_mask & non_road_mask & (
-            (is_tin_roof | is_clay_roof | is_concrete_roof) | (local_contrast > 8.0)
+        roof_edges = (morph_grad > 12) & non_veg_mask & (
+            (is_tin_roof | is_clay_roof | is_concrete_roof) | (local_contrast > 6.0)
         )
+
+        # Compact shapes with high local contrast take priority over asphalt
+        road_prob = np.where(is_concrete_roof & (local_contrast > 4.5), 0.0, road_prob)
 
         building_raw = (is_tin_roof | is_clay_roof | is_concrete_roof | roof_edges).astype(np.uint8)
         building_clean = cv2.morphologyEx(building_raw, cv2.MORPH_OPEN, kernel)
         building_prob = cv2.GaussianBlur(building_clean.astype(np.float32), (3, 3), 0)
         building_prob = np.clip(building_prob * 1.5, 0.0, 0.95)
-        building_prob = np.where(road_prob > 0.35, 0.0, building_prob)
+        building_prob = np.where(road_prob > 0.45, 0.0, building_prob)
         building_prob = np.where(water_prob > 0.25, 0.0, building_prob)
         building_prob = np.where(tree_prob > 0.40, 0.0, building_prob)
         # CRITICAL: Suppress buildings on open ground (sports fields, bare soil, playgrounds)
@@ -398,7 +445,6 @@ class UnifiedGeoAIEngine:
             building_prob = np.maximum(building_prob, building_signal * 0.94)
 
         # ── Feature 5: Farm Parcels ──
-        # Higher green_excess threshold, exclude open grounds and low-texture urban parks
         farm_prob_raw = np.where(
             (green_excess > 0.06) &
             (tree_prob < 0.35) &
@@ -429,7 +475,7 @@ class UnifiedGeoAIEngine:
         rgb_data: np.ndarray,
         ndsm: Optional[np.ndarray] = None
     ) -> Dict[str, np.ndarray]:
-        """Accelerated feature probability extraction on NVIDIA CUDA Tensor Cores."""
+        """Accelerated feature probability extraction on NVIDIA CUDA Tensor Cores with corridor morphology."""
         import torch
         # Load RGB onto RTX 4060 VRAM
         rgb_t = torch.from_numpy(rgb_data[:3]).to(self.device, dtype=torch.float32)
@@ -470,19 +516,57 @@ class UnifiedGeoAIEngine:
 
         non_veg_mask = (tree_prob_cu < 0.3) & (water_prob_cu < 0.2)
 
-        # 3. Buildings on CUDA
-        is_tin_roof = (brightness > 130) & non_veg_mask
-        is_clay_roof = (r > (g + 10)) & (r > (b + 14)) & (brightness > 60) & (brightness < 170) & (tree_prob_cu < 0.2)
-        roof_seeds = (is_tin_roof | is_clay_roof | (grad_cu > 12.0)) & non_veg_mask
-        building_prob_cu = torch.where(roof_seeds, torch.tensor(0.85, device=self.device), torch.tensor(0.0, device=self.device))
+        # Open ground / sports grounds suppression on CUDA
+        is_reddish_brown = (r > (g + 3)) & (r > (b + 5)) & (brightness > 50) & (brightness < 200)
+        is_bare_ground_cu = is_reddish_brown & (grad_cu < 7.0) & (~is_green_veg)
 
-        # 4. Roads on CUDA
-        is_asphalt = (color_dev < 20) & (brightness > 40) & (brightness < 160) & non_veg_mask & (~is_clay_roof)
-        road_prob_cu = torch.where(is_asphalt, torch.tensor(0.80, device=self.device), torch.tensor(0.0, device=self.device))
+        # 3. Buildings on CUDA (Tin, Clay, and Concrete flat apartment roofs)
+        # Compute local contrast using 2D avg pool on GPU
+        b_4d = brightness.unsqueeze(0).unsqueeze(0)
+        pad = 7
+        local_avg_b = torch.nn.functional.avg_pool2d(
+            torch.nn.functional.pad(b_4d, (pad, pad, pad, pad), mode="replicate"),
+            15, stride=1
+        ).squeeze()
+        local_contrast_cu = torch.abs(brightness - local_avg_b)
+
+        is_tin_roof = (brightness > 130) & (local_contrast_cu > 5.0) & non_veg_mask
+        is_clay_roof = (r > (g + 8)) & (r > (b + 10)) & (brightness > 55) & (brightness < 185) & (grad_cu > 8.0) & non_veg_mask & (~is_bare_ground_cu)
+        is_concrete_roof = (brightness > 65) & (brightness < 245) & (color_dev < 30) & (local_contrast_cu > 2.8) & (grad_cu > 6.0) & non_veg_mask
+
+        roof_seeds = (is_tin_roof | is_clay_roof | is_concrete_roof | (grad_cu > 12.0)) & non_veg_mask & (~is_bare_ground_cu)
+        building_prob_cu = torch.where(roof_seeds, torch.tensor(0.90, device=self.device), torch.tensor(0.0, device=self.device))
+
+        # 4. Roads on CUDA with Directional Corridor Filtering
+        is_asphalt_cu = (color_dev < 24) & (brightness > 35) & (brightness < 185) & non_veg_mask & (~is_clay_roof) & (~is_bare_ground_cu)
+        
+        # Transfer asphalt mask to CPU for fast directional morphology (eliminates cross-lane noise)
+        asphalt_np = is_asphalt_cu.cpu().numpy().astype(np.uint8)
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 3))
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 13))
+        d1_kernel = np.eye(11, dtype=np.uint8)
+        d2_kernel = np.fliplr(d1_kernel)
+
+        h_roads = cv2.morphologyEx(asphalt_np, cv2.MORPH_OPEN, h_kernel)
+        v_roads = cv2.morphologyEx(asphalt_np, cv2.MORPH_OPEN, v_kernel)
+        d1_roads = cv2.morphologyEx(asphalt_np, cv2.MORPH_OPEN, d1_kernel)
+        d2_roads = cv2.morphologyEx(asphalt_np, cv2.MORPH_OPEN, d2_kernel)
+        road_corridors = (h_roads | v_roads | d1_roads | d2_roads).astype(np.float32)
+        road_prob_np = cv2.GaussianBlur(road_corridors, (3, 3), 0)
+        road_prob_np = np.clip(road_prob_np * 1.8, 0.0, 0.95)
+
+        road_prob_cu = torch.from_numpy(road_prob_np).to(self.device, dtype=torch.float32)
+        
+        # Priority: Compact shapes with local contrast remain buildings
+        concrete_np = is_concrete_roof.cpu().numpy()
+        contrast_np = local_contrast_cu.cpu().numpy()
+        road_prob_np = np.where(concrete_np & (contrast_np > 4.5), 0.0, road_prob_np)
+        road_prob_cu = torch.from_numpy(road_prob_np).to(self.device, dtype=torch.float32)
+        building_prob_cu = torch.where(road_prob_cu > 0.45, torch.tensor(0.0, device=self.device), building_prob_cu)
 
         # 5. Farms on CUDA
         farm_prob_cu = torch.where(
-            (green_excess > 0.04) & (tree_prob_cu < 0.35) & (building_prob_cu < 0.2),
+            (green_excess > 0.05) & (tree_prob_cu < 0.35) & (building_prob_cu < 0.2) & (~is_bare_ground_cu),
             torch.tensor(0.85, device=self.device),
             torch.tensor(0.0, device=self.device)
         )
@@ -491,7 +575,7 @@ class UnifiedGeoAIEngine:
         if ndsm is not None:
             ndsm_t = torch.from_numpy(ndsm).to(self.device, dtype=torch.float32)
             tree_prob_cu = torch.where(ndsm_t >= 1.8, tree_prob_cu, tree_prob_cu * 0.15)
-            building_signal = ((ndsm_t >= 2.5) & (tree_prob_cu < 0.3)).float()
+            building_signal = ((ndsm_t >= 2.5) & (tree_prob_cu < 0.3) & (~is_bare_ground_cu)).float()
             building_prob_cu = torch.maximum(building_prob_cu, building_signal * 0.94)
             road_prob_cu = torch.where(ndsm_t < 1.2, road_prob_cu, torch.tensor(0.0, device=self.device))
             farm_prob_cu = torch.where(ndsm_t < 1.0, farm_prob_cu, torch.tensor(0.0, device=self.device))

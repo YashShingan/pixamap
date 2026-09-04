@@ -56,8 +56,8 @@ class RoadCenterlineExtractor:
         if graph.number_of_nodes() == 0:
             return []
 
-        # Step 4: Prune short dead-end spurs (< 25m on satellite) to eliminate incomplete stubs
-        min_spur = max(25.0, self.min_road_length_meters) if px_m >= 0.3 else self.min_road_length_meters
+        # Step 4: Prune short dead-end spurs (< 35m on satellite) to eliminate incomplete stubs
+        min_spur = max(35.0, self.min_road_length_meters) if px_m >= 0.3 else self.min_road_length_meters
         graph = self._prune_spurs_metric(graph, min_spur_meters=min_spur, pixel_size_meters=px_m)
 
         # Step 5: Extract Paths / LineStrings between Junctions (degree != 2)
@@ -88,7 +88,7 @@ class RoadCenterlineExtractor:
 
             line = LineString(geo_coords)
             # Smooth out micro-pixel zig-zags
-            line = line.simplify(0.000015, preserve_topology=True)
+            line = line.simplify(0.000020, preserve_topology=True)
             if line.is_empty or len(line.coords) < 2:
                 continue
 
@@ -96,8 +96,8 @@ class RoadCenterlineExtractor:
             avg_width_m = round(float(np.mean(widths)), 2)
             mean_conf = round(float(np.mean(probs)), 3)
 
-            # Minimum continuity threshold
-            min_len = max(25.0, self.min_road_length_meters) if px_m >= 0.3 else self.min_road_length_meters
+            # Minimum continuity threshold: Discard short isolated stubs (< 45m)
+            min_len = max(45.0, self.min_road_length_meters) if px_m >= 0.3 else self.min_road_length_meters
             if length_m < min_len:
                 continue
 
