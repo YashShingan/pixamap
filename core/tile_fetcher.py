@@ -107,4 +107,6 @@ class SatelliteTileFetcher:
         data = np.transpose(arr, (2, 0, 1))
 
         geo_bounds = (ul_lon, lr_lat, lr_lon, ul_lat)
-        return GeoRaster(data=data, bounds=geo_bounds, crs="EPSG:4326")
+        raster = GeoRaster(data=data, bounds=geo_bounds, crs="EPSG:4326")
+        raster.is_satellite_aoi = True
+        return raster
